@@ -1,6 +1,6 @@
 # The demo of trained MA-SCVP network
 ## Installion
-Install pytorch 1.8.1 with python 3.8.8. Or you can download our packed conda enviroment pytorch.tar.gz at [Kaggle](www.kaggle.com/datasets/sicongpan/ma-scvp-dataset).
+Install pytorch 1.8.1 with python 3.8.8. Or you can download our packed conda 4.14.0 enviroment pytorch.tar.gz at [Kaggle](www.kaggle.com/datasets/sicongpan/ma-scvp-dataset).
 ## Usage
 ```bash
 python infer.py ma-scvp_longtail32.pth.tar Dragon
