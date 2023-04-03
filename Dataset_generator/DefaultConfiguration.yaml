@@ -1,0 +1,25 @@
+%YAML:1.0
+pre_path: "D:/Data/LongTail_MA-SCVP/"
+model_path: "../3d_models/"
+name_of_pcd: "LM5"
+method_of_IG : 0
+octomap_resolution: 0.00625
+ground_truth_resolution: 0.002
+need_case_1: 32
+sampling_method: 0
+num_of_max_iteration: 10
+show: 0
+num_of_views : 32
+color_width: 1280
+color_height: 720
+color_fx: 9.1560668945312500e+02
+color_fy: 9.1332666015625000e+02
+color_ppx: 6.4714532470703125e+02
+color_ppy: 3.7251531982421875e+02
+color_model: 2
+color_k1: 1.2042199820280075e-01
+color_k2: -2.1373499929904938e-01
+color_k3: 5.3860000334680080e-03
+color_p1: -2.1210000850260258e-03
+color_p2: 0.
+depth_scale: 1.0000000474974513e-03
