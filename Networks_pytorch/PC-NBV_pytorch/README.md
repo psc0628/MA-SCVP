@@ -1,4 +1,5 @@
 # PCNBV network
+Thanks to [PCNBV](https://github.com/zhanhz/PC-NBV_pytorch).
 ## Usage
 Run default tests.  
 ```bash
