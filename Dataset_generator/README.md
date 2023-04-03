@@ -7,7 +7,7 @@ Note that Gurobi is free for academic use.
 Our codes can be compiled by Visual Studio 2022 with c++ 14 and run on Windows 11.  
 For other system, please check the file read/write or multithreading functions in the codes.  
 ## Note
-Change "const static size_t maxSize = 100000;" to "const static size_t maxSize = 1000" in file OcTreeKey.h, so that the code will run faster.
+Change "const static size_t maxSize = 100000;" to "const static size_t maxSize = 1000" in file OcTreeKey.h, so that the code will run faster.  
 ## Usage
 The mode of the system should be input in the Console.  
 Then give the object model names in the Console (-1 to break input).  

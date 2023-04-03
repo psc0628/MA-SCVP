@@ -1,0 +1,45 @@
+%YAML:1.0
+pre_path: "D:/Data/MA-SCVP/Test/"
+gt_path: "D:/Data/MA-SCVP/"
+model_path: "../3d_models/"
+nbv_net_path: "D:/Networks_pytorch/nbv-net-master"
+pcnbv_path: "D:/Networks_pytorch/PC-NBV_pytorch"
+sc_net_path: "D:/Networks_pytorch/ma_scvp"
+name_of_pcd: "LM5"
+method_of_IG : 7
+MA_SCVP_on : 1
+Combined_on : 0
+num_of_nbvs_combined : 1
+octomap_resolution: 0.00625
+ground_truth_resolution: 0.002
+num_of_max_iteration: 20
+is_save: 1
+evaluate_one_shot: 1
+show: 0
+move_wait : 0
+p_unknown_upper_bound: 0.65
+p_unknown_lower_bound: 0.45
+num_of_views : 32
+cost_weight: 0.5
+move_cost_on: 0
+move_weight: 0.5
+robot_cost_negtive: 1
+skip_coefficient : 1.0
+num_of_max_flow_node : -1
+interesting_threshold : 0.3
+skip_threshold : 0.2
+visble_rate : 0.7
+move_rate : 1.0
+color_width: 1280
+color_height: 720
+color_fx: 9.1560668945312500e+02
+color_fy: 9.1332666015625000e+02
+color_ppx: 6.4714532470703125e+02
+color_ppy: 3.7251531982421875e+02
+color_model: 2
+color_k1: 1.2042199820280075e-01
+color_k2: -2.1373499929904938e-01
+color_k3: 5.3860000334680080e-03
+color_p1: -2.1210000850260258e-03
+color_p2: 0.
+depth_scale: 1.0000000474974513e-03
