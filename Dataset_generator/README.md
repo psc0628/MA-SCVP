@@ -15,16 +15,16 @@ Make sure "model_path" in DefaultConfiguration.yaml contains these processed 3D 
 You may find our pre-porcessed 3D models at [Kaggle](https://www.kaggle.com/datasets/sicongpan/ma-scvp-dataset).  
 Or use [this sampling method](https://github.com/PointCloudLibrary/pcl/blob/master/tools/mesh_sampling.cpp) to process your own 3D object model from *.obj or *.ply to *.pcd.  
 The "pre_path" in DefaultConfiguration.yaml is the dataset saving path.  
-# Mode 0
+### Mode 0
 The system will label the object "name_of_pcd" in DefaultConfiguration.yaml with a set of view cases in test_view_cases.txt.  
-# Mode 1
+### Mode 1
 The system will perform NBV reconstruction on all object cases to get the sampling space and the longtail distribution.  
-# Mode 2
+### Mode 2
 This mode only works after running the Mode 1.  
 The system will genertate both NBVR and Longtail32 datasets on all object cases.  
-# Mode 3
+### Mode 3
 This mode only works after running the Mode 2.  
 The system will genertate both NBVR and Longtail8 subsets.
-# Mode 4
+### Mode 4
 This mode only works after running the Mode 3.  
 The system will check the datasets are correct or not.  
