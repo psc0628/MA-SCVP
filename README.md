@@ -1,5 +1,5 @@
 # MA-SCVP
-This is a repository for supporting our paper "[One-Shot View Planning for Fast and Complete Unknown Object Reconstruction](LINK)" by S. Pan, H. Hu, H. Wei, N. Dengler, T. Zaenker, and M. Bennewitz, submitted to IEEE Transaction on Robotics for review as a regular paper.  
+This is a repository for supporting our paper "[One-Shot View Planning for Fast and Complete Unknown Object Reconstruction](https://arxiv.org/pdf/2304.00910.pdf)" by S. Pan, H. Hu, H. Wei, N. Dengler, T. Zaenker, and M. Bennewitz, submitted to IEEE Transaction on Robotics for review as a regular paper.  
 ## Out-of-the-box Demo
 You can find an easy usage for our MA-SCVP network in the Demo folder.  
 ## View_planning_simulator
