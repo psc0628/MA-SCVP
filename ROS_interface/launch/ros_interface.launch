@@ -1,0 +1,45 @@
+<launch>
+
+    <!-- take robot ip as argument -->
+    <arg name="robot_ip" default="" />
+
+    <!-- launch the ur5 bringup with robot_ip -->
+    <include file="$(find ur_robot_driver)/launch/ur5_bringup.launch">
+        <arg name="robot_ip" value="$(arg robot_ip)" />
+    </include>
+
+    <!-- launch the ur5 moveit -->
+    <include file="$(find ur5_moveit_config)/launch/move_group.launch" />
+
+    <!-- launch the d435 camera -->
+    <rosparam>
+        /camera/stereo_module/visual_preset: 1
+    </rosparam>
+
+    <!-- launch the realsense camera and pass arguments -->
+    <include file="$(find realsense2_camera)/launch/rs_camera.launch">
+        <arg name="align_depth" value="true" />
+        <arg name="filters" value="pointcloud" />
+        <!-- set resolution -->
+        <arg name="depth_width" value="640" />
+        <arg name="depth_height" value="480" />
+        <arg name="depth_fps" value="30" />
+        <arg name="color_width" value="1280" />
+        <arg name="color_height" value="720" />
+        <arg name="color_fps" value="30" />
+        <arg name="clip_distance" value="1.0" />
+    </include>
+
+    <!-- The rpy in the comment uses the extrinsic XYZ convention, which is the same as is used in a URDF. See
+        http://wiki.ros.org/geometry2/RotationMethods and https://en.wikipedia.org/wiki/Euler_angles for more info. -->
+    <!-- xyz="0.000614899 -0.0332126 0.0588194" rpy="0.00391367 0.00134805 1.56867" -->
+    <node pkg="tf2_ros" type="static_transform_publisher" name="camera_link_broadcaster"
+        args="0.000614899 -0.0332126 0.0588194   0.00186126 -0.000905102 0.706353 0.707857 wrist_3_link camera_color_optical_frame" />
+
+
+    <!-- launch the rviz with config file -->
+    <node pkg="rviz" type="rviz" name="rviz" args="-d $(find ma_scvp_real)/config/ma_scvp_real.rviz" />
+
+    
+
+</launch>

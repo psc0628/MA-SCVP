@@ -1,0 +1,55 @@
+%YAML:1.0
+model_path: "./src/ma_scvp_real/data/GT/"
+pre_path: "./src/ma_scvp_real/data/"
+nbv_net_path: "./src/Networks_pytorch/nbv-net-master"
+pcnbv_path: "./src/Networks_pytorch/PC-NBV_pytorch"
+sc_net_path: "./src/Networks_pytorch/ma_scvp"
+name_of_pcd: "Test_Object"
+method_of_IG : 9
+MA_SCVP_on : 1
+Combined_on : 1
+num_of_nbvs_combined : 1
+octomap_resolution: 0.00625
+ground_truth_resolution: 0.002
+num_of_max_thread: 50
+num_of_max_iteration: 12
+first_view_id: 31
+height_of_ground: 0.008
+min_z_table: -0.002
+move_dis_pre_point: 0.05
+camera_to_object_dis: 0.15
+up_shift: 0.05
+gt_mode: 0
+is_save: 1
+evaluate_one_shot: 1
+icp_distance: 0.003
+height_to_filter_arm: 0.13
+size_scale: 1.1
+show: 0
+move_wait : 0
+p_unknown_upper_bound: 0.65
+p_unknown_lower_bound: 0.45
+num_of_views : 32
+cost_weight: 0.5
+move_cost_on: 0
+move_weight: 0.5
+robot_cost_negtive: 1
+skip_coefficient : 1.0
+num_of_max_flow_node : -1
+interesting_threshold : 0.65
+skip_threshold : 0.65
+visble_rate : 0.7
+move_rate : 1.0
+color_width: 1280
+color_height: 720
+color_fx: 919.4124755859375
+color_fy: 919.3323364257812
+color_ppx: 625.5408325195312
+color_ppy: 347.3991394042969
+color_model: 2
+color_k1: 0.
+color_k2: 0.
+color_k3: 0.
+color_p1: 0.
+color_p2: 0.
+depth_scale: 0.001
