@@ -614,7 +614,7 @@ public:
 
 		now_time = clock();
 		for (long long cas = 0; cas < share_data->view_cases.size(); cas++) { //·½°¸cas
-			if (share_data->view_cases[cas] != 134217872) continue; //for testing
+			//if (share_data->view_cases[cas] != 134217872) continue; //for testing
 			//cout << cas << " case testing:" << endl;
 			set<int> chosen_views;
 			for (long long j = share_data->view_cases[cas], i = 0; j != 0; j >>= 1, i++)
