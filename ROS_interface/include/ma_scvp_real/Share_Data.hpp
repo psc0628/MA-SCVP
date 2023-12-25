@@ -237,6 +237,9 @@ public:
 	bool move_wait;
 	map<string, double> mp_scale;
 
+	pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_ground_truth_downsampled;
+	pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_final_downsampled;
+
 	//�˲��ͼ
 	octomap::ColorOcTree* octo_model;
 	octomap::ColorOcTree* cloud_model;
@@ -244,7 +247,6 @@ public:
 	octomap::ColorOcTree* GT_sample;
 	double octomap_resolution;
 	double ground_truth_resolution;
-	double map_size;
 	double p_unknown_upper_bound; //! Upper bound for voxels to still be considered uncertain. Default: 0.97.
 	double p_unknown_lower_bound; //! Lower bound for voxels to still be considered uncertain. Default: 0.12.
 	
@@ -283,6 +285,10 @@ public:
 	double visble_rate;
 	double move_rate;
 
+	unordered_map<octomap::OcTreeKey, int, octomap::OcTreeKey::KeyHash>* voxel_gt;
+	unordered_map<octomap::OcTreeKey, int, octomap::OcTreeKey::KeyHash>* voxel_gt_sample;
+	unordered_map<octomap::OcTreeKey, int, octomap::OcTreeKey::KeyHash>* voxel_final;
+
 	int init_voxels;     //����voxel����
 	int voxels_in_BBX;   //��ͼvoxel����
 	double init_entropy; //��ͼ��Ϣ��
@@ -299,7 +305,9 @@ public:
 	int GT_points_number = -1; //Ԥ�Ȼ�ȡ�����пɼ����صĸ���
 	int cloud_points_number; //����GT�еĵ���
 
-	bool evaluate_one_shot; //one-shot pipeline是否需要更新最后的OctoMap用于评估，0表示不更新，直接出点云
+	bool final_viewer = false; //是否显示最终的点云
+
+	bool show_bbx = false; //是否显示bbx
 
 	int num_of_max_thread;
 	double height_of_ground;
@@ -313,6 +321,35 @@ public:
 	double icp_distance;
 	double height_to_filter_arm;
 	double size_scale;
+	double safe_distance;
+
+	double table_x_min;
+	double table_x_max;
+	double table_y_min;
+	double table_y_max;
+
+	vector<int> f_voxels; //frontier voxels的数量
+
+	int f_stop_iter = -1; //根据f_voxels停止的迭代轮次
+	double f_stop_threshold = -1; //根据f_voxels停止的阈值
+
+	int f_stop_iter_lenient = -1; //根据f_voxels停止的迭代轮次
+	double f_stop_threshold_lenient = -1; //根据f_voxels停止的阈值
+
+	int mascvp_nbv_needed_views = -1; //MA_SCVP+1NBV需要的视点数
+
+	int object_center_mode = 0; // 0:Online_Dynamic, 1:Prior_GT
+
+	vector<Eigen::Matrix4d> nbvs_pose_world; //所有视点的位姿
+
+	double map_scale = 1.2; // 扩大的地图，用于避免重复更新
+
+	Eigen::Vector3d map_center; // 地图的中心
+	double map_size; // 地图的大小
+
+	int vsc_nabourhood_num = 1; // 用于计算vsc的邻域数量
+
+	int test_index = -1; // 用于测试的index
 
 	Share_Data(string _config_file_path, string test_name = "", int test_rotate = -1, int test_view = -1, int test_method = -1, int move_test_on = -1, int combined_test_on = -1)
 	{
@@ -331,6 +368,7 @@ public:
 		fs["octomap_resolution"] >> octomap_resolution;
 		fs["ground_truth_resolution"] >> ground_truth_resolution;
 		fs["num_of_max_iteration"] >> num_of_max_iteration;
+		fs["test_index"] >> test_index;
 		fs["first_view_id"] >> first_view_id;
 		fs["num_of_max_thread"] >> num_of_max_thread;
 		fs["height_of_ground"] >> height_of_ground;
@@ -341,11 +379,18 @@ public:
 		fs["gt_mode"] >> gt_mode;
 		fs["show"] >> show;
 		fs["is_save"] >> is_save;
-		fs["evaluate_one_shot"] >> evaluate_one_shot;
 		fs["icp_distance"] >> icp_distance;
 		fs["height_to_filter_arm"] >> height_to_filter_arm;
 		fs["size_scale"] >> size_scale;
+		fs["safe_distance"] >> safe_distance;
+		fs["f_stop_threshold"] >> f_stop_threshold;
+		fs["mascvp_nbv_needed_views"] >> mascvp_nbv_needed_views;
+		fs["object_center_mode"] >> object_center_mode;
+		fs["map_scale"] >> map_scale;
+		fs["vsc_nabourhood_num"] >> vsc_nabourhood_num;
 		fs["move_wait"] >> move_wait;
+		fs["final_viewer"] >> final_viewer;
+		fs["show_bbx"] >> show_bbx;
 		fs["nbv_net_path"] >> nbv_net_path;
 		fs["pcnbv_path"] >> pcnbv_path;
 		fs["sc_net_path"] >> sc_net_path;
@@ -375,6 +420,10 @@ public:
 		fs["color_p1"] >> color_intrinsics.coeffs[3];
 		fs["color_p2"] >> color_intrinsics.coeffs[4];
 		fs["depth_scale"] >> depth_scale;
+		fs["table_x_min"] >> table_x_min;
+		fs["table_x_max"] >> table_x_max;
+		fs["table_y_min"] >> table_y_min;
+		fs["table_y_max"] >> table_y_max;
 		fs.release();
 		//�Զ�������
 		if (test_name != "") name_of_pcd = test_name;
@@ -481,15 +530,43 @@ public:
 		cloud_scene = temp_scene;
 		pcl::PointCloud<pcl::PointXYZRGB>::Ptr temp_now(new pcl::PointCloud<pcl::PointXYZRGB>);
 		cloud_now = temp_now;
+		voxel_gt = new unordered_map<octomap::OcTreeKey, int, octomap::OcTreeKey::KeyHash>();
+		voxel_gt_sample = new unordered_map<octomap::OcTreeKey, int, octomap::OcTreeKey::KeyHash>();
+		voxel_final = new unordered_map<octomap::OcTreeKey, int, octomap::OcTreeKey::KeyHash>();
 		access_directory(pre_path);
-		save_path = pre_path + name_of_pcd + '_' + to_string(method_of_IG);
+		save_path = pre_path + name_of_pcd + "_v" + to_string(first_view_id) + "_m" + to_string(method_of_IG);
 		//save_path = pre_path + name_of_pcd + "_r" + to_string(rotate_state) + "_v" + to_string(first_view_id) + "_m" + to_string(method_of_IG);
 		if (method_of_IG==7 && MA_SCVP_on == false) save_path += "_single";
 		if (move_cost_on == true) save_path += '_' + to_string(move_weight);
 		if (Combined_on == true) save_path += "_combined_" + to_string(num_of_nbvs_combined);
 		//if (method_of_IG == 10) save_path += "_mov";
+		if (object_center_mode == 1) save_path += "_gtcenter";
+
+		if (test_index >=0) save_path += "_t" + to_string(test_index);
+
 		cout << "pcd and yaml files readed." << endl;
 		cout << "save_path is: " << save_path << endl;
+
+		f_stop_threshold_lenient = f_stop_threshold * 5;
+
+		if (!(Combined_on == true || method_of_IG == 7)) { // 随机方法需要对比的数量
+			string test_path_fix = "";
+			if (test_index >=0) test_path_fix = "_t" + to_string(test_index);
+
+			ifstream fin_mascvp_nbv_needed_views(pre_path + name_of_pcd + "_v" + to_string(first_view_id) + "_m9_combined_1"+ test_path_fix +"/all_needed_views.txt");
+			if (!fin_mascvp_nbv_needed_views) {
+				cout << "no all_needed_views from mascvp+1nbv. run mascvp+1nbv first." << endl;
+			}
+			else {
+				fin_mascvp_nbv_needed_views >> mascvp_nbv_needed_views;
+				cout << "mascvp_nbv_needed_views num is " << mascvp_nbv_needed_views << endl;
+			}
+		}
+
+		if (object_center_mode == 1 || Combined_on == true) { // gt模式或者combined模式（即我们的方法），无需放大地图
+			map_scale = 1.0;
+		}
+
 		srand(clock());
 	}
 
@@ -497,6 +574,9 @@ public:
 		delete octo_model;
 		delete ground_truth_model;
 		delete cloud_model;
+		delete voxel_gt;
+		delete voxel_gt_sample;
+		delete voxel_final;
 		cloud_pcd->~PointCloud();
 		cloud_final->~PointCloud();
 		cloud_ground_truth->~PointCloud();

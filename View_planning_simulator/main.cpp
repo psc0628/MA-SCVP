@@ -19,7 +19,6 @@ public:
 	Share_Data* share_data;
 	octomap::ColorOcTree* ground_truth_model;
 	int full_voxels;
-	pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud;
 
 	Perception_3D(Share_Data* _share_data) {
 		share_data = _share_data;
@@ -42,10 +41,32 @@ public:
 	}
 
 	~Perception_3D() {
-		;
+		delete ground_truth_model;
 	}
 
 	bool precept(View* now_best_view) {
+		//如果使用保存的点云加速的话，尝试读取
+		if (share_data->use_saved_cloud) {
+			int view_id = now_best_view->id;
+			pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZRGB>);
+			pcl::PointCloud<pcl::PointXYZRGB>::Ptr no_table(new pcl::PointCloud<pcl::PointXYZRGB>);
+			string view_cloud_file_path = share_data->gt_path + "/GT_points/" + share_data->name_of_pcd + "_r" + to_string(share_data->rotate_state) + "/cloud_view" + to_string(view_id) + ".pcd";
+			string view_cloud_notable_file_path = share_data->gt_path + "/GT_points/" + share_data->name_of_pcd + "_r" + to_string(share_data->rotate_state) + "/cloud_notable_view" + to_string(view_id) + ".pcd";
+			if (pcl::io::loadPCDFile<pcl::PointXYZRGB>(view_cloud_file_path, *cloud) != -1 && pcl::io::loadPCDFile<pcl::PointXYZRGB>(view_cloud_notable_file_path, *no_table) != -1) {
+				cout << "Load view clouds success. Use saved cloud to speed up evaluation." << endl;
+				//记录当前采集点云
+				share_data->vaild_clouds++;
+				share_data->clouds.push_back(cloud);
+				//旋转至世界坐标系
+				share_data->clouds_notable.push_back(no_table);
+				*share_data->cloud_final += *no_table;
+				return true;
+			}
+			else {
+				cout << "Load view cloud failed. Use virtual perception." << endl;
+			}
+		}
+		//如果不使用保存数据或读取失败，在线生成
 		double now_time = clock();
 		//创建当前成像点云
 		pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_parallel(new pcl::PointCloud<pcl::PointXYZRGB>);
@@ -68,23 +89,26 @@ public:
 				it++;
 			}
 			//ground_truth_model->write(share_data->save_path + "/test_camrea.ot");
-			thread** precept_process = new thread * [full_voxels];
-			for (int i = 0; i < full_voxels; i++) {
-				precept_process[i] = new thread(precept_thread_process, i, cloud_parallel, &origin, &end[i], &view_pose_world, ground_truth_model, share_data);
+			//多线程处理
+			vector<thread> precept_process;
+			for (int i = 0; i < full_voxels; i += share_data->max_num_of_thread) {
+				for (int j = 0; j < share_data->max_num_of_thread && i + j < full_voxels; j++) {
+					precept_process.push_back(thread(precept_thread_process, i + j, cloud_parallel, &origin, &end[i + j], &view_pose_world, ground_truth_model, share_data));
+				}
+				for (int j = 0; j < share_data->max_num_of_thread && i + j < full_voxels; j++) {
+					precept_process[i + j].join();
+				}
 			}
-			for (int i = 0; i < full_voxels; i++)
-				(*precept_process[i]).join();
+			//释放内存
 			delete[] end;
-			for (int i = 0; i < full_voxels; i++)
-				precept_process[i]->~thread();
-			delete[] precept_process;
+			precept_process.clear();
+			precept_process.shrink_to_fit();
 		}
 		else {
 			cout << "View out of map.check." << endl;
 		}
-		pcl::PointCloud<pcl::PointXYZRGB>::Ptr temp(new pcl::PointCloud<pcl::PointXYZRGB>);
+		pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZRGB>);
 		pcl::PointCloud<pcl::PointXYZRGB>::Ptr no_table(new pcl::PointCloud<pcl::PointXYZRGB>);
-		cloud = temp;
 		cloud->is_dense = false;
 		no_table->is_dense = false;
 		cloud->points.resize(full_voxels);
@@ -126,6 +150,7 @@ public:
 		share_data->vaild_clouds++;
 		share_data->clouds.push_back(cloud);
 		//旋转至世界坐标系
+		share_data->clouds_notable.push_back(no_table);
 		*share_data->cloud_final += *no_table;
 		//cout << "virtual cloud num is " << vaild_point << endl;
 		//cout << "virtual cloud table num is " << table_point << endl;
@@ -165,8 +190,9 @@ public:
 			}
 		}
 
-		cloud_parallel->~PointCloud();
-		no_table->~PointCloud();
+		cloud_parallel->points.clear();
+		cloud_parallel->points.shrink_to_fit();
+
 		cout <<"Virtual cloud getted with time "<< clock() - now_time<<" ms." << endl;
 		return true;
 	}
@@ -285,12 +311,30 @@ public:
 	}
 
 	~Global_Path_Planner() {
+		view_id_in->clear();
 		delete view_id_in;
+		view_id_out->clear();
 		delete view_id_out;
+		for (int i = 0; i < graph.size(); i++) {
+			graph[i].clear();
+			graph[i].shrink_to_fit();
+		}
 		graph.clear();
+		graph.shrink_to_fit();
+		for (int i = 0; i < dp.size(); i++) {
+			dp[i].clear();
+			dp[i].shrink_to_fit();
+		}
 		dp.clear();
+		dp.shrink_to_fit();
+		for (int i = 0; i < path.size(); i++) {
+			path[i].clear();
+			path[i].shrink_to_fit();
+		}
 		path.clear();
+		path.shrink_to_fit();
 		global_path.clear();
+		global_path.shrink_to_fit();
 	}
 
 	double solve() {
@@ -359,14 +403,14 @@ public:
 	}
 };
 
+//NVB_Planner.hpp
 #define Over 0
 #define WaitData 1
 #define WaitViewSpace 2
 #define WaitInformation 3
 #define WaitMoving 4
 
-//NVB_Planner.hpp
-void save_cloud_mid(pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud, string name);
+void save_cloud_mid(pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud, string name, Share_Data* share_data);
 void create_view_space(View_Space** now_view_space, View* now_best_view, Share_Data* share_data, int iterations);
 void create_views_information(Views_Information** now_views_infromation, View* now_best_view, View_Space* now_view_space, Share_Data* share_data, int iterations);
 void move_robot(View* now_best_view, View_Space* now_view_space, Share_Data* share_data);
@@ -384,15 +428,15 @@ public:
 	View* now_best_view;
 	Share_Data* share_data;
 	pcl::visualization::PCLVisualizer::Ptr viewer;
+	bool now_views_infromation_created = false;
 
 	~NBV_Planner() {
 		delete percept;
 		delete now_best_view;
 		delete voxel_information;
 		delete now_view_space;
-		//只有搜索生成了information
-		if (share_data->method_of_IG == 6 || share_data->method_of_IG == 7 || share_data->method_of_IG == 8 || share_data->method_of_IG == 9);
-		else delete now_views_infromation;
+		//只有使用过搜索方法的生成了information
+		if (now_views_infromation_created) delete now_views_infromation;
 	}
 
 	double check_size(double predicted_size, Eigen::Vector3d object_center_world, vector<Eigen::Vector3d>& points) {
@@ -409,12 +453,17 @@ public:
 	NBV_Planner(Share_Data* _share_data, int _status = WaitData) {
 		share_data = _share_data;
 		iterations = 0;
+		share_data->iterations = 0;
 		status = _status;
 		share_data->now_view_space_processed = false;
 		share_data->now_views_infromation_processed = false;
 		share_data->move_on = false;
 		voxel_information = new Voxel_Information(share_data->p_unknown_lower_bound, share_data->p_unknown_upper_bound);
 		voxel_information->init_mutex_views(share_data->num_of_views);
+		//只有初始选择了搜索方法才会生成信息增益类，结合的pipeline也是在初始化时有搜索才需要删除
+		if (share_data->method_of_IG == 0 || share_data->method_of_IG == 1 || share_data->method_of_IG == 2 || share_data->method_of_IG == 3 || share_data->method_of_IG == 4 || share_data->method_of_IG == 5 || share_data->method_of_IG == 10) {
+			now_views_infromation_created = true;
+		}
 		//初始化GT
 		//share_data->access_directory(share_data->save_path);
 		//GT cloud
@@ -615,6 +664,9 @@ public:
 				boost::this_thread::sleep(boost::posix_time::microseconds(100000));
 			}
 		}
+
+		points.clear();
+		points.shrink_to_fit();
 	}
 
 	int plan() {
@@ -653,18 +705,50 @@ public:
 					share_data->access_directory(share_data->save_path + "/movement");
 					ofstream fout_move(share_data->save_path + "/movement/path" + to_string(iterations) + ".txt");
 					fout_move << now_best_view->id << '\t' << now_best_view->robot_cost << '\t' << share_data->movement_cost << endl;
+
+					//如果视点个数是12/13/14/15/16，注意这边有差距2，因为一个是初始视点，还有一个是新选取的视点
+					if (iterations == 10 || iterations == 11 || iterations == 12 || iterations == 13 || iterations == 14 || iterations == (share_data->mascvp_nbv_needed_views - 2)) {
+						//计算一下按oneshot的长度
+						vector<int> view_set;
+						for (int i = 0; i < now_view_space->views.size(); i++) {
+							if (i== share_data->first_view_id) continue;
+							if (now_view_space->views[i].vis) view_set.push_back(i);
+						}
+						View* first_view = new View(now_view_space->views[share_data->first_view_id]);
+						Global_Path_Planner* gloabl_path_planner = new Global_Path_Planner(share_data, now_view_space, first_view, view_set);
+						double one_shot_distance = gloabl_path_planner->solve();
+						vector<int> path_id = gloabl_path_planner->global_path;
+						if (path_id.size() != iterations + 2) cout << "error: one shot path is not equal to iterations + 2" << endl;
+						share_data->access_directory(share_data->save_path + "/movement_" + to_string(iterations + 2));
+						double total_distance = 0;
+						for (int i = 0; i < path_id.size() - 1; i++) {
+							ofstream fout(share_data->save_path + "/movement_" + to_string(iterations + 2) + "/path" + to_string(i) + ".txt");
+							pair<int, double> local_path = get_local_path(now_view_space->views[path_id[i]].init_pos.eval(), now_view_space->views[path_id[i+1]].init_pos.eval(), share_data->object_center_world.eval(), share_data->predicted_size * sqrt(2));
+							if (local_path.first < 0) cout << "local path wrong." << endl;
+							total_distance += local_path.second;
+							fout << path_id[i + 1] << '\t' << local_path.second << '\t' << total_distance << endl;
+						}
+						// clean
+						delete gloabl_path_planner;
+						view_set.clear();
+						view_set.shrink_to_fit();
+						path_id.clear();
+						path_id.shrink_to_fit();
+						delete first_view;
+					}
 				}
 				else if (share_data->method_of_IG == 6) { //NBV-NET
 					share_data->access_directory(share_data->nbv_net_path + "/log");
 					ifstream ftest;
 					do {
-						ftest.open(share_data->nbv_net_path + "/log/ready.txt");
+						//ftest.open(share_data->nbv_net_path + "/log/ready.txt"); //串行版本
+						ftest.open(share_data->nbv_net_path + "/log/" + share_data->name_of_pcd + "_r" + to_string(share_data->rotate_state) + "_v" + to_string(share_data->first_view_id) + '_' + to_string(iterations) + "_ready.txt"); //并行版本
 					} while (!ftest.is_open());
 					ftest.close();
 					ifstream fin(share_data->nbv_net_path + "/log/" + share_data->name_of_pcd + "_r" + to_string(share_data->rotate_state) + "_v" + to_string(share_data->first_view_id) + '_' + to_string(iterations) + ".txt");
 					int id;
 					fin >> id;
-					cout <<"next view id is "<< id << endl;
+					cout << "next view id is " << id << endl;
 					now_view_space->views[id].vis++;
 					delete now_best_view;
 					now_best_view = new View(now_view_space->views[id]);
@@ -675,14 +759,16 @@ public:
 					fout_move << now_best_view->id << '\t' << now_best_view->robot_cost << '\t' << share_data->movement_cost << endl;
 					//更新标志文件
 					this_thread::sleep_for(chrono::seconds(1));
-					int removed = remove((share_data->nbv_net_path + "/log/ready.txt").c_str());
-					if (removed!=0) cout << "cannot remove ready.txt." << endl;
+					//int removed = remove((share_data->nbv_net_path + "/log/ready.txt").c_str()); //串行版本
+					int removed = remove((share_data->nbv_net_path + "/log/" + share_data->name_of_pcd + "_r" + to_string(share_data->rotate_state) + "_v" + to_string(share_data->first_view_id) + '_' + to_string(iterations) + "_ready.txt").c_str()); //并行版本
+					if (removed != 0) cout << "cannot remove ready.txt." << endl;
 				}
 				else if (share_data->method_of_IG == 9) { //PCNBV
 					share_data->access_directory(share_data->pcnbv_path + "/log");
 					ifstream ftest;
 					do {
-						ftest.open(share_data->pcnbv_path + "/log/ready.txt");
+						//ftest.open(share_data->pcnbv_path + "/log/ready.txt"); //串行版本
+						ftest.open(share_data->pcnbv_path + "/log/" + share_data->name_of_pcd + "_r" + to_string(share_data->rotate_state) + "_v" + to_string(share_data->first_view_id) + '_' + to_string(iterations) + "_ready.txt"); //并行版本
 					} while (!ftest.is_open());
 					ftest.close();
 					ifstream fin(share_data->pcnbv_path + "/log/" + share_data->name_of_pcd + "_r" + to_string(share_data->rotate_state) + "_v" + to_string(share_data->first_view_id) + '_' + to_string(iterations) + ".txt");
@@ -699,15 +785,17 @@ public:
 					fout_move << now_best_view->id << '\t' << now_best_view->robot_cost << '\t' << share_data->movement_cost << endl;
 					//更新标志文件
 					this_thread::sleep_for(chrono::seconds(1));
-					int removed = remove((share_data->pcnbv_path + "/log/ready.txt").c_str());
+					//int removed = remove((share_data->pcnbv_path + "/log/ready.txt").c_str()); //串行版本
+					int removed = remove((share_data->pcnbv_path + "/log/" + share_data->name_of_pcd + "_r" + to_string(share_data->rotate_state) + "_v" + to_string(share_data->first_view_id) + '_' + to_string(iterations) + "_ready.txt").c_str()); //并行版本
 					if (removed != 0) cout << "cannot remove ready.txt." << endl;
 				}
-				else if (share_data->method_of_IG == 7) { //SCVP
+				else if (share_data->method_of_IG == 7) { //(MA-)SCVP
 					if (iterations == 0 + share_data->num_of_nbvs_combined) {
 						share_data->access_directory(share_data->sc_net_path + "/log");
 						ifstream ftest;
 						do {
-							ftest.open(share_data->sc_net_path + "/log/ready.txt");
+							//ftest.open(share_data->sc_net_path + "/log/ready.txt"); //串行版本
+							ftest.open(share_data->sc_net_path + "/log/" + share_data->name_of_pcd + "_r" + to_string(share_data->rotate_state) + "_v" + to_string(share_data->first_view_id) + "_ready.txt"); //并行版本
 						} while (!ftest.is_open());
 						ftest.close();
 						ifstream fin(share_data->sc_net_path + "/log/" + share_data->name_of_pcd + "_r" + to_string(share_data->rotate_state) + "_v" + to_string(share_data->first_view_id) + ".txt");
@@ -722,7 +810,7 @@ public:
 							if (now_view_space->views[i].vis)	vis_view_ids.insert(i);
 						}
 						for (auto it = view_set_label.begin(); it != view_set_label.end(); ) {
-							if(vis_view_ids.count((*it))){
+							if (vis_view_ids.count((*it))) {
 								it = view_set_label.erase(it);
 							}
 							else {
@@ -732,7 +820,7 @@ public:
 						//保存一下最终视点个数
 						ofstream fout_all_needed_views(share_data->save_path + "/all_needed_views.txt");
 						fout_all_needed_views << view_set_label.size() + 1 + share_data->num_of_nbvs_combined << endl;
-						cout<< "All_needed_views is "<< view_set_label.size() + 1 + share_data->num_of_nbvs_combined << endl;
+						cout << "All_needed_views is " << view_set_label.size() + 1 + share_data->num_of_nbvs_combined << endl;
 						//如果没有视点需要，这就直接退出
 						if (view_set_label.size() == 0) {
 							//更新标志文件
@@ -758,8 +846,13 @@ public:
 						fout_move << now_best_view->id << '\t' << now_best_view->robot_cost << '\t' << share_data->movement_cost << endl;
 						//更新标志文件
 						this_thread::sleep_for(chrono::seconds(1));
-						int removed = remove((share_data->sc_net_path + "/log/ready.txt").c_str());
+						//int removed = remove((share_data->sc_net_path + "/log/ready.txt").c_str()); //串行版本
+						int removed = remove((share_data->sc_net_path + "/log/"+ share_data->name_of_pcd + "_r" + to_string(share_data->rotate_state) + "_v" + to_string(share_data->first_view_id) + "_ready.txt").c_str()); //并行版本
 						if (removed != 0) cout << "cannot remove ready.txt." << endl;
+						//clean
+						delete gloabl_path_planner;
+						view_set_label.clear();
+						view_set_label.shrink_to_fit();
 					}
 					else {
 						if (iterations == share_data->view_label_id.size() + share_data->num_of_nbvs_combined) {
@@ -776,7 +869,7 @@ public:
 						fout_move << now_best_view->id << '\t' << now_best_view->robot_cost << '\t' << share_data->movement_cost << endl;
 					}
 				}
-				else{//搜索算法
+				else {//搜索算法
 					//对视点排序
 					sort(now_view_space->views.begin(), now_view_space->views.end(), view_utility_compare);
 					/*if (share_data->sum_local_information == 0) {
@@ -889,6 +982,107 @@ public:
 			}
 			break;
 		case WaitMoving:
+			//if the method is not (combined) one-shot and random, then use f_voxel to decide whether to stop
+			if(!(share_data->Combined_on == true || share_data->method_of_IG == 7 || share_data->method_of_IG == 8)){
+				//compute f_voxels
+				int f_voxels_num = 0;
+				for (octomap::ColorOcTree::leaf_iterator it = share_data->octo_model->begin_leafs(), end = share_data->octo_model->end_leafs(); it != end; ++it) {
+					double occupancy = (*it).getOccupancy();
+					if (fabs(occupancy - 0.5) < 1e-3) { // unknown
+						auto coordinate = it.getCoordinate();
+						if (coordinate.x() >= now_view_space->object_center_world(0) - now_view_space->predicted_size && coordinate.x() <= now_view_space->object_center_world(0) + now_view_space->predicted_size
+							&& coordinate.y() >= now_view_space->object_center_world(1) - now_view_space->predicted_size && coordinate.y() <= now_view_space->object_center_world(1) + now_view_space->predicted_size
+							&& coordinate.z() >= now_view_space->object_center_world(2) - now_view_space->predicted_size && coordinate.z() <= now_view_space->object_center_world(2) + now_view_space->predicted_size)
+						{
+							// compute the frontier voxels that is unknown and has at least one free and one occupied neighbor
+							int free_cnt = 0;
+							int occupied_cnt = 0;
+							for (int i = -1; i <= 1; i++)
+								for (int j = -1; j <= 1; j++)
+									for (int k = -1; k <= 1; k++)
+									{
+										if (i == 0 && j == 0 && k == 0) continue;
+										double x = coordinate.x() + i * share_data->octomap_resolution;
+										double y = coordinate.y() + j * share_data->octomap_resolution;
+										double z = coordinate.z() + k * share_data->octomap_resolution;
+										octomap::point3d neighbour(x, y, z);
+										octomap::OcTreeKey neighbour_key;  bool neighbour_key_have = share_data->octo_model->coordToKeyChecked(neighbour, neighbour_key);
+										if (neighbour_key_have) {
+											octomap::ColorOcTreeNode* neighbour_voxel = share_data->octo_model->search(neighbour_key);
+											if (neighbour_voxel != NULL) {
+												double neighbour_occupancy = neighbour_voxel->getOccupancy();
+												free_cnt += neighbour_occupancy < 0.5 ? 1 : 0;
+												occupied_cnt += neighbour_occupancy > 0.5 ? 1 : 0;
+											}
+										}
+									}
+							//edge
+							if (free_cnt >= 1 && occupied_cnt >= 1) {
+								f_voxels_num++;
+								//cout << "f voxel: " << coordinate.x() << " " << coordinate.y() << " " << coordinate.z() << endl;
+							}
+						}
+					}
+				}
+				share_data->f_voxels.push_back(f_voxels_num);
+
+				share_data->access_directory(share_data->save_path + "/f_voxels");
+				ofstream fout_f_voxels_num(share_data->save_path + "/f_voxels/f_num" + to_string(iterations) + ".txt");
+				fout_f_voxels_num << f_voxels_num << endl;
+			    // check if the f_voxels_num is stable
+				if (share_data->f_stop_iter == -1) {
+					if (share_data->f_voxels.size() > 2) {
+						bool f_voxels_change = false;
+						//三次扫描过程中，连续两个f变化都小于阈值就结束
+						if (fabs(share_data->f_voxels[share_data->f_voxels.size() - 1] - share_data->f_voxels[share_data->f_voxels.size() - 2]) >= 32 * 32 * 32 * share_data->f_stop_threshold) {
+							f_voxels_change = true;
+						}
+						if (fabs(share_data->f_voxels[share_data->f_voxels.size() - 2] - share_data->f_voxels[share_data->f_voxels.size() - 3]) >= 32 * 32 * 32 * share_data->f_stop_threshold) {
+							f_voxels_change = true;
+						}
+						if (!f_voxels_change) {
+							cout << "two f_voxels change smaller than threshold. Record." << endl;
+							share_data->f_stop_iter = iterations;
+
+							ofstream fout_f_stop_views(share_data->save_path + "/f_voxels/f_stop_views.txt");
+							fout_f_stop_views << 1 << "\t" << share_data->f_stop_iter + 1 << endl; //1 means f_voxels stop
+						}
+					}
+					if (share_data->over == true && share_data->f_stop_iter == -1) {
+						cout << "Max iter reached. Record." << endl;
+						share_data->f_stop_iter = iterations;
+
+						ofstream fout_f_stop_views(share_data->save_path + "/f_voxels/f_stop_views.txt");
+						fout_f_stop_views << 0 << "\t" << share_data->f_stop_iter + 1 << endl; //0 means over
+					}
+				}
+				if (share_data->f_stop_iter_lenient == -1) {
+					if (share_data->f_voxels.size() > 2) {
+						bool f_voxels_change = false;
+						//三次扫描过程中，连续两个f变化都小于阈值就结束
+						if (fabs(share_data->f_voxels[share_data->f_voxels.size() - 1] - share_data->f_voxels[share_data->f_voxels.size() - 2]) >= 32 * 32 * 32 * share_data->f_stop_threshold_lenient) {
+							f_voxels_change = true;
+						}
+						if (fabs(share_data->f_voxels[share_data->f_voxels.size() - 2] - share_data->f_voxels[share_data->f_voxels.size() - 3]) >= 32 * 32 * 32 * share_data->f_stop_threshold_lenient) {
+							f_voxels_change = true;
+						}
+						if (!f_voxels_change) {
+							cout << "two f_voxels change smaller than threshold_lenient. Record." << endl;
+							share_data->f_stop_iter_lenient = iterations;
+
+							ofstream fout_f_stop_views(share_data->save_path + "/f_voxels/f_lenient_stop_views.txt");
+							fout_f_stop_views << 1 << "\t" << share_data->f_stop_iter_lenient + 1 << endl; //1 means f_voxels stop
+						}
+					}
+					if (share_data->over == true && share_data->f_stop_iter_lenient == -1) {
+						cout << "Max iter reached. Record." << endl;
+						share_data->f_stop_iter_lenient = iterations;
+
+						ofstream fout_f_stop_views(share_data->save_path + "/f_voxels/f_lenient_stop_views.txt");
+						fout_f_stop_views << 0 << "\t" << share_data->f_stop_iter_lenient + 1 << endl; //0 means over
+					}
+				}
+			}
 			//virtual move
 			if (share_data->over) {
 				cout << "Progress over.Saving octomap and cloud." << endl;
@@ -897,6 +1091,7 @@ public:
 			}
 			if (share_data->move_on) {
 				iterations++;
+				share_data->iterations = iterations;
 				share_data->now_view_space_processed = false;
 				share_data->now_views_infromation_processed = false;
 				share_data->move_on = false;
@@ -931,18 +1126,18 @@ public:
 	}
 };
 
-atomic<bool> stop = false;		//控制程序结束
-Share_Data* share_data;			//共享数据区指针
-NBV_Planner* nbv_plan;
-
-void save_cloud_mid(pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud, string name) {
+void save_cloud_mid(pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud, string name, Share_Data* share_data) {
 	//保存中间的点云的线程，目前不检查是否保存完毕
 	share_data->save_cloud_to_disk(cloud, "/clouds", name);
 	cout << name << " saved" << endl;
+	//清空点云
+	cloud->points.clear();
+	cloud->points.shrink_to_fit();
 }
 
 void create_view_space(View_Space** now_view_space, View* now_best_view, Share_Data* share_data, int iterations) {
 	//计算关键帧相机位姿
+	now_best_view->get_next_camera_pos(share_data->now_camera_pose_world, share_data->object_center_world);
 	share_data->now_camera_pose_world = (share_data->now_camera_pose_world * now_best_view->pose.inverse()).eval();;
 	//处理viewspace,如果不需要评估并且是one-shot路径就不更新OctoMap
 	if (share_data->evaluate_one_shot == 0 && share_data->method_of_IG == 7 && iterations > 0 + share_data->num_of_nbvs_combined);
@@ -951,7 +1146,7 @@ void create_view_space(View_Space** now_view_space, View* now_best_view, Share_D
 	if(share_data->is_save)	{
 		pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_mid(new pcl::PointCloud<pcl::PointXYZRGB>);
 		*cloud_mid = *share_data->cloud_final;
-		thread save_mid(save_cloud_mid, cloud_mid, "pointcloud" + to_string(iterations));
+		thread save_mid(save_cloud_mid, cloud_mid, "pointcloud" + to_string(iterations), share_data);
 		save_mid.detach();
 	}
 	//更新标志位
@@ -977,6 +1172,7 @@ void create_views_information(Views_Information** now_views_infromation, View* n
 					if (node == NULL) cout << "what?" << endl;
 					fout << node->getOccupancy() << '\n';
 				}
+		fout.close();
 	}
 	else if (share_data->method_of_IG == 9) { //PCNBV
 		share_data->access_directory(share_data->pcnbv_path + "/data");
@@ -997,6 +1193,10 @@ void create_views_information(Views_Information** now_views_infromation, View* n
 			if (now_view_space->views[i].vis)	fout_viewstate << 1 << '\n';
 			else  fout_viewstate << 0 << '\n';
 		}
+		fout_pointcloud.close();
+		fout_viewstate.close();
+		cloud_out->points.clear();
+		cloud_out->points.shrink_to_fit();
 	}
 	else if (share_data->method_of_IG == 7) { //SCVP
 		if (iterations == 0 + share_data->num_of_nbvs_combined) {
@@ -1023,17 +1223,19 @@ void create_views_information(Views_Information** now_views_infromation, View* n
 					else  fout_viewstate << 0 << '\n';
 				}
 			}
+			fout.close();
+			fout_viewstate.close();
 		}
 	}
 	else { //搜索方法
 		int num_of_cover = 1;
 		int num_of_voxel = 0;
 		//处理views_informaiton
-		if (iterations == 0) (*now_views_infromation) = new Views_Information(share_data, nbv_plan->voxel_information, now_view_space, iterations);
+		if (iterations == 0) (*now_views_infromation) = new Views_Information(share_data, now_view_space->voxel_information, now_view_space, iterations);
 		else (*now_views_infromation)->update(share_data, now_view_space, iterations);
 		if (share_data->method_of_IG == GMC) {
 			//处理GMC，获取全局优化函数
-			views_voxels_GMC* max_cover_solver = new views_voxels_GMC(share_data->num_of_max_flow_node, now_view_space, *now_views_infromation, nbv_plan->voxel_information, share_data);
+			views_voxels_GMC* max_cover_solver = new views_voxels_GMC(share_data->num_of_max_flow_node, now_view_space, *now_views_infromation, now_view_space->voxel_information, share_data);
 			max_cover_solver->solve();
 			vector<pair<int, int>> coverage_view_id_voxelnum_set = max_cover_solver->get_view_id_voxelnum_set();
 			num_of_cover = coverage_view_id_voxelnum_set.size();
@@ -1044,17 +1246,21 @@ void create_views_information(Views_Information** now_views_infromation, View* n
 				num_of_voxel += coverage_view_id_voxelnum_set[i].second;
 			}
 			delete max_cover_solver;
+			coverage_view_id_voxelnum_set.clear();
+			coverage_view_id_voxelnum_set.shrink_to_fit();
 			//保证分母不为0，无实际意义
 			num_of_voxel = max(num_of_voxel, 1);
 		}
 		else if (share_data->method_of_IG == MCMF) {
 			//处理网络流，获取全局优化函数
-			views_voxels_MF* set_cover_solver = new views_voxels_MF(share_data->num_of_max_flow_node, now_view_space, *now_views_infromation, nbv_plan->voxel_information, share_data);
+			views_voxels_MF* set_cover_solver = new views_voxels_MF(share_data->num_of_max_flow_node, now_view_space, *now_views_infromation, now_view_space->voxel_information, share_data);
 			set_cover_solver->solve();
 			vector<int> coverage_view_id_set = set_cover_solver->get_view_id_set();
 			for (int i = 0; i < coverage_view_id_set.size(); i++)
 				now_view_space->views[coverage_view_id_set[i]].in_coverage[iterations] = 1;
 			delete set_cover_solver;
+			coverage_view_id_set.clear();
+			coverage_view_id_set.shrink_to_fit();
 		}
 		//综合计算局部贪心与全局优化，产生视点信息熵
 		share_data->sum_local_information = 0;
@@ -1088,11 +1294,11 @@ void create_views_information(Views_Information** now_views_infromation, View* n
 }
 
 void move_robot(View* now_best_view, View_Space* now_view_space, Share_Data* share_data) {
-	if (nbv_plan->iterations + 1 == share_data->num_of_nbvs_combined) { //Combined+MASCVP切换
+	if (share_data->iterations + 1 == share_data->num_of_nbvs_combined) { //Combined+MASCVP切换
 		share_data->method_of_IG = SCVP;
 		sort(now_view_space->views.begin(), now_view_space->views.end(), view_id_compare);
 	}
-	if (share_data->num_of_max_iteration > 0 && nbv_plan->iterations + 1 >= share_data->num_of_max_iteration) share_data->over = true;
+	if (share_data->num_of_max_iteration > 0 && share_data->iterations + 1 >= share_data->num_of_max_iteration) share_data->over = true;
 	if (!share_data->move_wait) share_data->move_on = true;
 }
 
@@ -1104,6 +1310,11 @@ void show_cloud(pcl::visualization::PCLVisualizer::Ptr viewer) {
 		boost::this_thread::sleep(boost::posix_time::microseconds(100000));
 	}
 }
+
+//main.cpp
+atomic<bool> stop = false;		//控制程序结束
+Share_Data* share_data;			//共享数据区指针
+NBV_Planner* nbv_plan;
 
 void get_command()
 {	//从控制台读取指令字符串
@@ -1137,12 +1348,16 @@ void get_run()
 	delete nbv_plan;
 }
 
-#define DebugOne 0
-#define DebugAll 1
-#define TestAll 2
-#define GetGTPoints 3
+//单个case测试结束后，可获取默认进程堆句柄，执行内存紧缩操作;可Linux下替代使用malloc_trim(0)
+//HANDLE hHeap = GetProcessHeap();
+//HeapCompact(hHeap, 0);
 
-int mode = DebugAll;
+#define GetGTPoints 0
+#define DebugOne 1
+#define TestAll 2
+#define HandGTSize 3
+
+int mode = GetGTPoints;
 
 int main()
 {
@@ -1150,33 +1365,63 @@ int main()
 	ios::sync_with_stdio(false);
 	cout << "input mode:";
 	cin >> mode;
+
 	vector<int> rotate_states;
-	//rotate_states.push_back(0);
+	rotate_states.push_back(0);
 	//rotate_states.push_back(1);
-	//rotate_states.push_back(2);
+	rotate_states.push_back(2);
 	rotate_states.push_back(3);
-	//rotate_states.push_back(4);
-	//rotate_states.push_back(5);
-	rotate_states.push_back(6);
+	rotate_states.push_back(4);
+	rotate_states.push_back(5);
+	//rotate_states.push_back(6);
 	//rotate_states.push_back(7);
+
 	vector<int> first_view_ids;
 	first_view_ids.push_back(0);
+	first_view_ids.push_back(1);
 	first_view_ids.push_back(2);
+	//first_view_ids.push_back(3);
 	first_view_ids.push_back(4);
+	//first_view_ids.push_back(5);
+	first_view_ids.push_back(6);
+	first_view_ids.push_back(7);
+	first_view_ids.push_back(8);
+	//first_view_ids.push_back(9);
+	//first_view_ids.push_back(10);
+	//first_view_ids.push_back(11);
+	first_view_ids.push_back(12);
+	//first_view_ids.push_back(13);
 	first_view_ids.push_back(14);
-	first_view_ids.push_back(27);
-	//for (int i = 0; i < 32; i++)
-	//	first_view_ids.push_back(i);
+	//first_view_ids.push_back(15);
+	first_view_ids.push_back(16);
+	//first_view_ids.push_back(17);
+	first_view_ids.push_back(18);
+	first_view_ids.push_back(19);
+	first_view_ids.push_back(20);
+	first_view_ids.push_back(21);
+	first_view_ids.push_back(22);
+	//first_view_ids.push_back(23);
+	first_view_ids.push_back(24);
+	first_view_ids.push_back(25);
+	//first_view_ids.push_back(26);
+	//first_view_ids.push_back(27);
+	first_view_ids.push_back(28);
+	first_view_ids.push_back(29);
+	first_view_ids.push_back(30);
+	//first_view_ids.push_back(31);
+
 	int combined_test_on;
 	cout << "combined on:";
 	cin >> combined_test_on;
-	//scvp，7需要先跑，其他方法读取个数，若后跑就按默认值
-	vector<int> methods;
-	methods.push_back(7);
-	methods.push_back(3);
-	methods.push_back(4);
-	methods.push_back(0);
-	methods.push_back(6);
+
+	////scvp，7需要先跑，其他方法读取个数，若后跑就按默认值
+	//vector<int> methods;
+	//methods.push_back(7);
+	//methods.push_back(3);
+	//methods.push_back(4);
+	//methods.push_back(0);
+	//methods.push_back(6);
+
 	int method_id;
 	cout << "thread for method id:";
 	cin >> method_id;
@@ -1204,18 +1449,6 @@ int main()
 		runner.join();
 		cmd.join();
 		delete share_data;
-	}
-	else if (mode == DebugAll){
-		//测试0视点,自选方法
-		for (int i = 0; i < names.size(); i++) {
-			//数据区初始化
-			share_data = new Share_Data("../DefaultConfiguration.yaml", names[i]);
-			//NBV系统运行线程
-			thread runner(get_run);
-			//等待线程结束
-			runner.join();
-			delete share_data;
-		}
 	}
 	else if (mode == TestAll) {
 		//测试所有物体、视点、方法
@@ -1272,7 +1505,7 @@ int main()
 				write.close();
 				*/
 				
-				//获取全部点云
+				//获取全部点云，从0-31顺序
 				for (int i = 0; i < nbv_plan->now_view_space->views.size(); i++) {
 					nbv_plan->percept->precept(&nbv_plan->now_view_space->views[i]);
 				}
@@ -1297,8 +1530,14 @@ int main()
 				*/
 				
 				//保存GT
-				share_data->access_directory(share_data->gt_path + "/GT_points_num/");
-				ofstream fout_GT_points_num(share_data->gt_path + "/GT_points_num/" + names[i] + "_r" + to_string(rotate_state) + ".txt");
+				share_data->access_directory(share_data->gt_path + "/GT_points/" + names[i] + "_r" + to_string(rotate_state) + "/");
+
+				for (int j = 0; j < nbv_plan->now_view_space->views.size(); j++) {
+					//保存点云
+					pcl::io::savePCDFile<pcl::PointXYZRGB>(share_data->gt_path + "/GT_points/" + names[i] + "_r" + to_string(rotate_state) + "/cloud_view" + to_string(j) + ".pcd", *share_data->clouds[j]);
+					pcl::io::savePCDFile<pcl::PointXYZRGB>(share_data->gt_path + "/GT_points/" + names[i] + "_r" + to_string(rotate_state) + "/cloud_notable_view" + to_string(j) + ".pcd", *share_data->clouds_notable[j]);
+				}
+				ofstream fout_GT_points_num(share_data->gt_path + "/GT_points/" + names[i] + "_r" + to_string(rotate_state) + "/visible_num.txt");
 				fout_GT_points_num << voxel->size() << endl;
 				cout << "Rotate " << rotate_state << " GT_points_num is " << voxel->size() << " ,rate is " << 1.0 * voxel->size() / share_data->cloud_points_number << endl;
 				delete voxel;
@@ -1307,6 +1546,44 @@ int main()
 				
 			}
 			
+		}
+	}
+	else if (mode == HandGTSize) {
+		//Shrinking the point cloud of an object makes the surface watertight
+		for (int i = 0; i < names.size(); i++) {
+			cout << "Get GT size of pointcloud model " << names[i] << endl;
+			share_data = new Share_Data("../DefaultConfiguration.yaml", names[i]);
+			nbv_plan = new NBV_Planner(share_data);
+			double original_size = nbv_plan->now_view_space->predicted_size;
+			share_data->access_directory(share_data->pre_path + "/Ground_size/");
+			for (auto it = share_data->ground_truth_model->begin_leafs(); it != share_data->ground_truth_model->end_leafs(); it++) {
+				share_data->ground_truth_model->setNodeColor(it.getKey(), 255, 0, 0);
+			}
+			share_data->ground_truth_model->write(share_data->pre_path + "/Ground_size/" + names[i] + ".ot");
+			double minus_size = 0.0;
+			bool ok;
+			cout << "Minus 0.01m (1/0):";
+			cin >> ok;
+			while (ok) {
+				minus_size += 0.01;
+				delete nbv_plan;
+				delete share_data;
+				share_data = new Share_Data("../DefaultConfiguration.yaml", names[i]);
+				share_data->mp_scale[share_data->name_of_pcd] = minus_size;
+				nbv_plan = new NBV_Planner(share_data);
+				share_data->access_directory(share_data->pre_path + "/Ground_size/");
+				for (auto it = share_data->ground_truth_model->begin_leafs(); it != share_data->ground_truth_model->end_leafs(); it++) {
+					share_data->ground_truth_model->setNodeColor(it.getKey(), 255, 0, 0);
+				}
+				share_data->ground_truth_model->write(share_data->pre_path + "/Ground_size/" + names[i] + ".ot");
+				cout << "Minus 0.01m (1/0):";
+				cin >> ok;
+			};
+			if (minus_size != 0) {
+				share_data->access_directory(share_data->pre_path + "/Ground_size/");
+				ofstream fout_GT_size(share_data->pre_path + "/Ground_size/" + names[i] + ".txt");
+				fout_GT_size << minus_size << '\n';
+			}
 		}
 	}
 	cout << "System over." << endl;
@@ -1364,8 +1641,37 @@ obj_000029
 obj_000030
 obj_000031
 obj_000032
+*/
 
+/*
+Armadillo
+Dragon
+Horse
+Lion
+LM10
+LM12
+obj_000002
+obj_000004
+obj_000025
+obj_000032
 LM6
 obj_000010
 obj_000011
+cat
+centaur
+cheff
+chicken
+david
+dog
+face
+ganesha
+gorilla
+gun
+lioness
+para
+rhino
+running_horse
+trex
+victoria
+wolf
 */

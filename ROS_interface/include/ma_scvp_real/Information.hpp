@@ -165,7 +165,6 @@ public:
 		//定义frontier
 		vector<octomap::point3d> points;
 		pcl::PointCloud<pcl::PointXYZ>::Ptr edge(new pcl::PointCloud<pcl::PointXYZ>);
-		double map_size = view_space->predicted_size;
 		//查找地图中的edge
 		for (octomap::ColorOcTree::leaf_iterator it = octo_model->begin_leafs(), end = octo_model->end_leafs(); it != end; ++it)
 		{
@@ -174,9 +173,9 @@ public:
 			(*occupancy_map)[it.getKey()] = occupancy;
 			if (voxel_information->is_unknown(occupancy)) {
 				auto coordinate = it.getCoordinate();
-				if (coordinate.x() >= view_space->object_center_world(0) - map_size && coordinate.x() <= view_space->object_center_world(0) + map_size
-					&& coordinate.y() >= view_space->object_center_world(1) - map_size && coordinate.y() <= view_space->object_center_world(1) + map_size
-					&& coordinate.z() >= view_space->object_center_world(2) - map_size && coordinate.z() <= view_space->object_center_world(2) + map_size)
+				if (coordinate.x() >= share_data->map_center(0) - share_data->map_size && coordinate.x() <= share_data->map_center(0) + share_data->map_size
+					&& coordinate.y() >= share_data->map_center(1) - share_data->map_size && coordinate.y() <= share_data->map_center(1) + share_data->map_size
+					&& coordinate.z() >= share_data->map_center(2) - share_data->map_size && coordinate.z() <= share_data->map_center(2) + share_data->map_size)
 				{
 					points.push_back(coordinate);
 					if (frontier_check(coordinate, octo_model, voxel_information, octomap_resolution)==2) edge->points.push_back(pcl::PointXYZ(coordinate.x(), coordinate.y(), coordinate.z()));
@@ -211,7 +210,7 @@ public:
 		cout << "edge is " << edge->points.size() << endl;
 		cout << "object_map is " << object_weight->size() << endl;
 		//根据BBX计算最多有多少射线，射线个数最多为表面积大小*体积，用于分配指针内存
-		double pre_line_point = 2.0 * map_size / octomap_resolution;
+		double pre_line_point = 2.0 * share_data->map_size / octomap_resolution;
 		//long long superficial = ceil(5.0 * pre_line_point * pre_line_point);
 		long long volume = ceil(pre_line_point * pre_line_point * pre_line_point);
 		//max_num_of_rays = superficial* volume * share_data->num_of_views;
@@ -220,12 +219,12 @@ public:
 		cout << "full rays num is " << max_num_of_rays << endl;
 		//计算BBX的八个顶点，用于划定射线范围
 		vector<Eigen::Vector4d> convex_3d;
-		double x1 = view_space->object_center_world(0) - map_size;
-		double x2 = view_space->object_center_world(0) + map_size;
-		double y1 = view_space->object_center_world(1) - map_size;
-		double y2 = view_space->object_center_world(1) + map_size;
-		double z1 = view_space->object_center_world(2) - map_size;
-		double z2 = view_space->object_center_world(2) + map_size;
+		double x1 = share_data->map_center(0) - share_data->map_size;
+		double x2 = share_data->map_center(0) + share_data->map_size;
+		double y1 = share_data->map_center(1) - share_data->map_size;
+		double y2 = share_data->map_center(1) + share_data->map_size;
+		double z1 = share_data->map_center(2) - share_data->map_size;
+		double z2 = share_data->map_center(2) + share_data->map_size;
 		convex_3d.push_back(Eigen::Vector4d(x1, y1, z1, 1));
 		convex_3d.push_back(Eigen::Vector4d(x1, y2, z1, 1));
 		convex_3d.push_back(Eigen::Vector4d(x2, y1, z1, 1));
@@ -302,7 +301,6 @@ public:
 	void update(Share_Data* share_data, View_Space* view_space,int iterations) {
 		//更新内部数据
 		double now_time = clock();
-		double map_size = view_space->predicted_size;
 		//注意视点需要按照id排序来建立映射
 		sort(view_space->views.begin(), view_space->views.end(), view_id_compare);
 		//重新记录八叉树
@@ -334,9 +332,9 @@ public:
 			(*occupancy_map)[it.getKey()] = occupancy;
 			if (voxel_information->is_unknown(occupancy)) {
 				auto coordinate = it.getCoordinate();
-				if (coordinate.x() >= view_space->object_center_world(0) - map_size && coordinate.x() <= view_space->object_center_world(0) + map_size
-					&& coordinate.y() >= view_space->object_center_world(1) - map_size && coordinate.y() <= view_space->object_center_world(1) + map_size
-					&& coordinate.z() >= view_space->object_center_world(2) - map_size && coordinate.z() <= view_space->object_center_world(2) + map_size)
+				if (coordinate.x() >= share_data->map_center(0) - share_data->map_size && coordinate.x() <= share_data->map_center(0) + share_data->map_size
+					&& coordinate.y() >= share_data->map_center(1) - share_data->map_size && coordinate.y() <= share_data->map_center(1) + share_data->map_size
+					&& coordinate.z() >= share_data->map_center(2) - share_data->map_size && coordinate.z() <= share_data->map_center(2) + share_data->map_size)
 				{
 					points.push_back(coordinate);
 					if (frontier_check(coordinate, octo_model, voxel_information, octomap_resolution)==2) edge->points.push_back(pcl::PointXYZ(coordinate.x(), coordinate.y(), coordinate.z()));
@@ -374,13 +372,13 @@ public:
 		//检测是否重生成
 		now_time = clock();
 		bool regenerate = false;
-		if (view_space->object_changed) {
+		if (view_space->object_map_changed) {
 			regenerate = true;
 		}
 		//如果重生成，则更新数据结构
 		if (regenerate) {
 			//重计算最大射线数量，从0开始
-			double pre_line_point = 2.0 * map_size / octomap_resolution;
+			double pre_line_point = 2.0 * share_data->map_size / octomap_resolution;
 			//long long superficial = ceil(5.0 * pre_line_point * pre_line_point);
 			long long volume = ceil(pre_line_point * pre_line_point * pre_line_point);
 			//max_num_of_rays = superficial* volume * share_data->num_of_views;
@@ -398,12 +396,12 @@ public:
 
 			//计算BBX的八个顶点，用于划定射线范围
 			vector<Eigen::Vector4d> convex_3d;
-			double x1 = view_space->object_center_world(0) - map_size;
-			double x2 = view_space->object_center_world(0) + map_size;
-			double y1 = view_space->object_center_world(1) - map_size;
-			double y2 = view_space->object_center_world(1) + map_size;
-			double z1 = view_space->object_center_world(2) - map_size;
-			double z2 = view_space->object_center_world(2) + map_size;
+			double x1 = share_data->map_center(0) - share_data->map_size;
+			double x2 = share_data->map_center(0) + share_data->map_size;
+			double y1 = share_data->map_center(1) - share_data->map_size;
+			double y2 = share_data->map_center(1) + share_data->map_size;
+			double z1 = share_data->map_center(2) - share_data->map_size;
+			double z2 = share_data->map_center(2) + share_data->map_size;
 			convex_3d.push_back(Eigen::Vector4d(x1, y1, z1, 1));
 			convex_3d.push_back(Eigen::Vector4d(x1, y2, z1, 1));
 			convex_3d.push_back(Eigen::Vector4d(x2, y1, z1, 1));
@@ -562,9 +560,9 @@ void ray_cast_thread_process(int* ray_num, Ray_Information** rays_info, unordere
 						mid = l + (r - l) / 2;
 					}
 					octomap::KeyRay::iterator first = mid;
-					while (first  != ray_set->end() && (octo_model->keyToCoord(*first).x() < view_space->object_center_world(0) - view_space->predicted_size || octo_model->keyToCoord(*first).x() > view_space->object_center_world(0) + view_space->predicted_size
-						|| octo_model->keyToCoord(*first).y() < view_space->object_center_world(1) - view_space->predicted_size || octo_model->keyToCoord(*first).y() > view_space->object_center_world(1) + view_space->predicted_size
-						|| octo_model->keyToCoord(*first).z() < view_space->object_center_world(2) - view_space->predicted_size || octo_model->keyToCoord(*first).z() > view_space->object_center_world(2) + view_space->predicted_size)) first++;
+					while (first  != ray_set->end() && (octo_model->keyToCoord(*first).x() < view_space->map_center(0) - view_space->map_size || octo_model->keyToCoord(*first).x() > view_space->map_center(0) + view_space->map_size
+						|| octo_model->keyToCoord(*first).y() < view_space->map_center(1) - view_space->map_size || octo_model->keyToCoord(*first).y() > view_space->map_center(1) + view_space->map_size
+						|| octo_model->keyToCoord(*first).z() < view_space->map_center(2) - view_space->map_size || octo_model->keyToCoord(*first).z() > view_space->map_center(2) + view_space->map_size)) first++;
 					//如果没有非空元素，直接丢弃射线
 					if (last - first < 0) {
 						delete ray_set;
@@ -572,13 +570,6 @@ void ray_cast_thread_process(int* ray_num, Ray_Information** rays_info, unordere
 					}
 					octomap::KeyRay::iterator stop = last;
 					stop++;
-					//显示一下
-					//while (octo_model->keyToCoord(*first).x() < view_space->object_center_world(0) - view_space->predicted_size || octo_model->keyToCoord(*first).x() > view_space->object_center_world(0) + view_space->predicted_size
-					//	|| octo_model->keyToCoord(*first).y() < view_space->object_center_world(1) - view_space->predicted_size || octo_model->keyToCoord(*first).y() > view_space->object_center_world(1) + view_space->predicted_size
-					//	|| octo_model->keyToCoord(*first).z() < min(view_space->height_of_ground, view_space->object_center_world(2) - view_space->predicted_size) || octo_model->keyToCoord(*first).z() > view_space->object_center_world(2) + view_space->predicted_size) first++;
-					//octomap::point3d ss = octo_model->keyToCoord(*first);
-					//octomap::point3d ee = octo_model->keyToCoord(*last);
-					//view_space->viewer->addLine<pcl::PointXYZ>(pcl::PointXYZ(ss(0), ss(1), ss(2)), pcl::PointXYZ(ee(0), ee(1), ee(2)), rr, gg, bb, "line" + to_string(pos) + "-" + to_string(x) + "-" + to_string(y));
 					//将射线加入视点的集合，第一个元素与最后一个元素key+数组+头+尾
 					Ray* ray = new Ray(*first, *last, ray_set, first, stop);
 					rays.push_back(ray);
@@ -1325,7 +1316,9 @@ public:
 		}
 		model->addConstr(subject_observation_cost <= share_data->visble_rate * subject_full, "subject_observation_cost");
 		cout << "Linear constraint added." << endl;
-		model->set("TimeLimit", "100");
+		//model->set("TimeLimit", "100");
+		//20秒一般够用了
+		model->set("TimeLimit", "20");
 		cout << "TimeLimit is " << model->get(GRB_DoubleParam_TimeLimit) << " s." << endl;
 		cout << "Integer linear program formulated with executed time " << clock() - now_time << " ms." << endl;
 	}

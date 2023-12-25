@@ -3,10 +3,10 @@ Thanks to [NBVNET](https://github.com/irvingvasquez/nbv-net).
 ## Usage
 Run default tests.  
 ```bash
-python run_test_rotate_view.py
+python run_test_rotate_view_parallel.py
 ```
+Input the names of objects to be tested and end with "-1".  
 ## Change test setup
-Change the number of maximum iteration in line 66 (if you run with our pipeline, this should equals to the number of NBVs).  
+Change the number of maximum iteration in line 94 (if you run with our pipeline, this should equals to the number of NBVs).  
 Change the pre-trained models in line 9.  
-Change the models in all_name.txt.  
-Change the rotation set and initial view set in lines 16-31 which corresponds to the view planning tests.  
+Change the rotation set and initial view set in lines 18-60 which corresponds to the view planning tests.  

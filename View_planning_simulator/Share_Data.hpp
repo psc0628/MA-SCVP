@@ -181,8 +181,8 @@ static void rs2_deproject_pixel_to_point(float point[3], const struct rs2_intrin
 #define APORA 4
 #define Kr 5
 #define NBVNET 6
-#define SCVP 7
-#define Random 8
+#define SCVP 7		// MA-SCVP and SCVP
+#define Random 8	// Random-Iterative and Random-OneShot
 #define PCNBV 9
 #define GMC 10
 
@@ -209,10 +209,13 @@ public:
 	bool show;
 	bool is_save;
 	int num_of_max_iteration;
+	int max_num_of_thread = 1000000;	//最大线程数
+	int iterations;
 
 	//点云数据
 	atomic<int> vaild_clouds;
 	vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr > clouds;							//点云组
+	vector<pcl::PointCloud<pcl::PointXYZRGB>::Ptr > clouds_notable;							//点云组
 	pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_pcd;
 	pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_ground_truth;
 	pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_final;
@@ -285,6 +288,18 @@ public:
 	int GT_points_number = -1; //预先获取的所有可见体素的个数
 	int cloud_points_number; //点云GT中的点数
 
+	vector<int> f_voxels; //frontier voxels的数量
+
+	int f_stop_iter = -1; //根据f_voxels停止的迭代轮次
+	double f_stop_threshold = -1; //根据f_voxels停止的阈值
+
+	int f_stop_iter_lenient = -1; //根据f_voxels停止的迭代轮次
+	double f_stop_threshold_lenient = -1; //根据f_voxels停止的阈值
+
+	bool use_saved_cloud = false; //是否使用预先保存的点云
+
+	int mascvp_nbv_needed_views = -1; //MA_SCVP+1NBV需要的视点数
+
 	Share_Data(string _config_file_path, string test_name = "", int test_rotate = -1, int test_view = -1, int test_method = -1, int move_test_on = -1, int combined_test_on = -1)
 	{
 		process_cnt = -1;
@@ -296,6 +311,7 @@ public:
 		fs["gt_path"] >> gt_path;
 		fs["model_path"] >> pcd_file_path;
 		fs["name_of_pcd"] >> name_of_pcd;
+		fs["max_num_of_thread"] >> max_num_of_thread;
 		fs["method_of_IG"] >> method_of_IG;
 		fs["MA_SCVP_on"] >> MA_SCVP_on;
 		fs["Combined_on"] >> Combined_on;
@@ -303,6 +319,8 @@ public:
 		fs["octomap_resolution"] >> octomap_resolution;
 		fs["ground_truth_resolution"] >> ground_truth_resolution;
 		fs["num_of_max_iteration"] >> num_of_max_iteration;
+		fs["f_stop_threshold"] >> f_stop_threshold;
+		fs["use_saved_cloud"] >> use_saved_cloud;
 		fs["show"] >> show;
 		fs["is_save"] >> is_save;
 		fs["evaluate_one_shot"] >> evaluate_one_shot;
@@ -369,18 +387,27 @@ public:
 			cout << "Can not read 3d model file. Check." << endl;
 		}
 		//旋转Z轴向上
-		set<string> names_toward;
-		names_toward.insert("Armadillo");
-		names_toward.insert("Asian_Dragon");
-		names_toward.insert("Dragon");
-		names_toward.insert("Stanford_Bunny");
-		names_toward.insert("Happy_Buddha");
-		names_toward.insert("Thai_Statue");
-		//names_toward.insert("Lucy");
-		names_toward.insert("Horse");
-		names_toward.insert("Lion");
-		if (names_toward.count(name_of_pcd)) {
-			pcl::transformPointCloud(*cloud_pcd, *cloud_pcd, get_toward_pose(4));
+		set<string> names_toward_y;
+		names_toward_y.insert("Armadillo");
+		names_toward_y.insert("Asian_Dragon");
+		names_toward_y.insert("Dragon");
+		names_toward_y.insert("Stanford_Bunny");
+		names_toward_y.insert("Happy_Buddha");
+		names_toward_y.insert("Thai_Statue");
+		names_toward_y.insert("Horse");
+		names_toward_y.insert("Lion");
+		names_toward_y.insert("face");
+		if (names_toward_y.count(name_of_pcd)) {
+			pcl::transformPointCloud(*cloud_pcd, *cloud_pcd, get_toward_pose(4)); // z<->y
+		}
+		set<string> names_toward_x;
+		names_toward_x.insert("trex");
+		names_toward_x.insert("para");
+		names_toward_x.insert("rhino");
+		names_toward_x.insert("cheff");
+		names_toward_x.insert("chicken");
+		if (names_toward_x.count(name_of_pcd)) {
+			pcl::transformPointCloud(*cloud_pcd, *cloud_pcd, get_toward_pose(2)); // z<->x
 		}
 		//调整大小保持水密表面
 		mp_scale["Armadillo"] = 0.02;
@@ -400,8 +427,6 @@ public:
 		mp_scale["obj_000007"] = 0.05;
 		mp_scale["obj_000008"] = 0.03;
 		mp_scale["obj_000009"] = 0.03;
-		mp_scale["obj_000010"] = 0.03;
-		mp_scale["obj_000011"] = 0.06;
 		mp_scale["obj_000012"] = 0.02;
 		mp_scale["obj_000018"] = 0.02;
 		mp_scale["obj_000020"] = 0.08;
@@ -416,6 +441,25 @@ public:
 		mp_scale["obj_000029"] = 0.02;
 		mp_scale["obj_000030"] = 0.18;
 		mp_scale["obj_000032"] = 0.01;
+		mp_scale["centaur"] = 0.08;
+		mp_scale["cheff"] = 0.07;
+		mp_scale["chicken"] = 0.03;
+		mp_scale["david"] = 0.03;
+		mp_scale["ganesha"] = 0.01;
+		mp_scale["gorilla"] = 0.05;
+		mp_scale["gun"] = 0.01;
+		mp_scale["lioness"] = 0.05;
+		mp_scale["para"] = 0.06;
+		mp_scale["rhino"] = 0.05;
+		mp_scale["running_horse"] = 0.06;
+		mp_scale["trex"] = 0.04;
+		mp_scale["victoria"] = 0.03;
+		mp_scale["wolf"] = 0.01;
+		mp_scale["LM6"] = 0.03;
+		mp_scale["obj_000010"] = 0.03;
+		mp_scale["obj_000011"] = 0.06;
+		mp_scale["dog"] = 0.03;
+		
 
 		//旋转角度
 		Eigen::Matrix3d rotation;
@@ -430,7 +474,7 @@ public:
 		pcl::transformPointCloud(*cloud_pcd, *cloud_pcd, T_pose);
 		//读GT
 		ifstream fin_GT_points_number;
-		fin_GT_points_number.open(gt_path + "/GT_points_num/" + name_of_pcd + "_r" + to_string(rotate_state) + ".txt");
+		fin_GT_points_number.open(gt_path + "/GT_points/" + name_of_pcd + "_r" + to_string(rotate_state) + "/visible_num.txt");
 		if (fin_GT_points_number.is_open()) {
 			int points_number;
 			fin_GT_points_number >> points_number;
@@ -438,8 +482,9 @@ public:
 			cout << "GT_points_number is " << GT_points_number << endl;
 		}
 		else {
-			cout << "no GT_points_number, run mode 3 first. This process will continue without GT_points_number." << endl;
+			cout << "no GT_points_number, run mode 0 first. This process will continue without GT_points_number." << endl;
 		}
+		fin_GT_points_number.close();
 
 		//octo_model = new octomap::ColorOcTree(octomap_resolution);
 		//octo_model->setProbHit(0.95);	//设置传感器命中率,初始0.7
@@ -475,25 +520,55 @@ public:
 		access_directory(pre_path);
 		//save_path = "../" + name_of_pcd + '_' + to_string(method_of_IG);
 		save_path = pre_path + name_of_pcd + "_r" + to_string(rotate_state) + "_v" + to_string(first_view_id) + "_m" + to_string(method_of_IG);
-		if (method_of_IG==7 && MA_SCVP_on == false) save_path += "_single";
+		if (method_of_IG==7 && MA_SCVP_on == false) save_path += "_nostate";
 		if (move_cost_on == true) save_path += '_' + to_string(move_weight);
+		if (method_of_IG==10 && move_rate<= 0.99) save_path += '_' + to_string(move_rate);
 		if (Combined_on == true) save_path += "_combined_" + to_string(num_of_nbvs_combined);
-		//if (method_of_IG == 10) save_path += "_mov";
 		cout << "pcd and yaml files readed." << endl;
 		cout << "save_path is: " << save_path << endl;
+
+		f_stop_threshold_lenient = f_stop_threshold * 5;
+
+		if (method_of_IG == 8) { // 随机方法需要对比的数量
+			ifstream fin_mascvp_nbv_needed_views(gt_path + "/Compare/" + name_of_pcd + "_r" + to_string(rotate_state) + "_v" + to_string(first_view_id) + "_m9_combined_1/all_needed_views.txt");
+			if (!fin_mascvp_nbv_needed_views) {
+				cout << "no all_needed_views from mascvp+1nbv. run mascvp+1nbv first." << endl;
+			}
+			else {
+				fin_mascvp_nbv_needed_views >> mascvp_nbv_needed_views;
+				cout << "mascvp_nbv_needed_views num is " << mascvp_nbv_needed_views << endl;
+			}
+		}
+
 		srand(clock());
 	}
 
 	~Share_Data() {
-		delete octo_model;
-		delete ground_truth_model;
-		delete cloud_model;
-		cloud_pcd->~PointCloud();
-		cloud_final->~PointCloud();
-		cloud_ground_truth->~PointCloud();
-		for (int i = 0; i < clouds.size(); i++)
-			clouds[i]->~PointCloud();
+		if (octo_model != NULL) delete octo_model;
+		if (ground_truth_model != NULL) delete ground_truth_model;
+		if (cloud_model != NULL) delete cloud_model;
+		if (GT_sample != NULL) delete GT_sample;
+		cloud_pcd->points.clear();
+		cloud_pcd->points.shrink_to_fit();
+		cloud_final->points.clear();
+		cloud_final->points.shrink_to_fit();
+		cloud_ground_truth->points.clear();
+		cloud_ground_truth->points.shrink_to_fit();
+		for (int i = 0; i < clouds.size(); i++) {
+			clouds[i]->points.clear();
+			clouds[i]->points.shrink_to_fit();
+		}
+		clouds.clear();
+		clouds.shrink_to_fit();
+		for (int i = 0; i < clouds_notable.size(); i++) {
+			clouds_notable[i]->points.clear();
+			clouds_notable[i]->points.shrink_to_fit();
+		}
+		clouds_notable.clear();
+		clouds_notable.shrink_to_fit();
 		if (show) viewer->~PCLVisualizer();
+		f_voxels.clear();
+		f_voxels.shrink_to_fit();
 	}
 
 	Eigen::Matrix4d get_toward_pose(int toward_state)

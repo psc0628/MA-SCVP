@@ -63,11 +63,11 @@ public:
 		// keep cloud in the tablesapce
 		pass.setInputCloud(cloud);          
         pass.setFilterFieldName("x");         
-        pass.setFilterLimits(-0.55, 0.15);       
+        pass.setFilterLimits(share_data->table_x_min, share_data->table_x_max);
         pass.filter(*cloud);
         pass.setInputCloud(cloud);         
         pass.setFilterFieldName("y");         
-        pass.setFilterLimits(0.22, 0.62);           
+		pass.setFilterLimits(share_data->table_y_min, share_data->table_y_max);    
         pass.filter(*cloud);
         pass.setInputCloud(cloud);              
         pass.setFilterFieldName("z");          
@@ -105,20 +105,20 @@ public:
 		share_data->clouds.push_back(cloud);
 		*share_data->cloud_scene += *cloud;
 		
-		// pass through table
+		// pass through 2 times BBX size to get the final cloud, assume the object size will not be larger than 2 times init BBX size
 		pcl::PointCloud<pcl::PointXYZRGB>::Ptr no_table(new pcl::PointCloud<pcl::PointXYZRGB>);
 		*no_table = *cloud;
 		pass.setInputCloud(no_table);          
         pass.setFilterFieldName("x");         
-        pass.setFilterLimits(share_data->object_center_world(0) - share_data->predicted_size, share_data->object_center_world(0) + share_data->predicted_size);       
+        pass.setFilterLimits(share_data->map_center(0) - 2 * share_data->map_size, share_data->map_center(0) + 2 * share_data->map_size);       
         pass.filter(*no_table);
         pass.setInputCloud(no_table);         
         pass.setFilterFieldName("y");         
-        pass.setFilterLimits(share_data->object_center_world(1) - share_data->predicted_size, share_data->object_center_world(1) + share_data->predicted_size);          
+        pass.setFilterLimits(share_data->map_center(1) - 2 * share_data->map_size, share_data->map_center(1) + 2 * share_data->map_size);          
         pass.filter(*no_table);
         pass.setInputCloud(no_table);             
         pass.setFilterFieldName("z");   
-		pass.setFilterLimits(max(share_data->height_of_ground, share_data->object_center_world(2) - share_data->predicted_size), share_data->object_center_world(2) + share_data->predicted_size); 
+		pass.setFilterLimits(max(share_data->height_of_ground, share_data->map_center(2) - 2 * share_data->map_size), share_data->map_center(2) + 2 * share_data->map_size); 
         pass.filter(*no_table);
 		*share_data->cloud_final += *no_table;
 
@@ -187,7 +187,7 @@ public:
 				int u = (*view_id_out)[i];
 				int v = (*view_id_out)[j];
 				//������·��
-				pair<int, double> local_path = get_local_path(view_space->views[u].init_pos.eval(), view_space->views[v].init_pos.eval(), view_space->object_center_world.eval(), view_space->predicted_size * sqrt(2)); //��Χ�а뾶�ǰ�߳��ĸ���2��
+				pair<int, double> local_path = get_local_path(view_space->views[u].init_pos.eval(), view_space->views[v].init_pos.eval(), view_space->object_center_world.eval(), view_space->predicted_size + share_data->safe_distance); //��Χ�а뾶�ǰ�߳��ĸ���2��
 				if (local_path.first < 0) cout << "local path wrong." << endl;
 				graph[i][j] = local_path.second;
 			}
@@ -343,30 +343,16 @@ public:
 		pass.setFilterLimitsNegative(false); 
 		pass.setInputCloud(share_data->cloud_now);          
         pass.setFilterFieldName("x");         
-        pass.setFilterLimits(-0.55, 0.15);     
+        pass.setFilterLimits(share_data->table_x_min, share_data->table_x_max);   
         pass.filter(*share_data->cloud_now);
         pass.setInputCloud(share_data->cloud_now);         
         pass.setFilterFieldName("y");         
-        pass.setFilterLimits(0.22, 0.62);        
+		pass.setFilterLimits(share_data->table_y_min, share_data->table_y_max);     
         pass.filter(*share_data->cloud_now);
         pass.setInputCloud(share_data->cloud_now);              
         pass.setFilterFieldName("z");          
         pass.setFilterLimits(share_data->height_of_ground, share_data->height_to_filter_arm);      
         pass.filter(*share_data->cloud_now);
-
-		if (share_data->show) { //��ʾBBX�����λ�á�GT
-			pcl::visualization::PCLVisualizer::Ptr viewer = pcl::visualization::PCLVisualizer::Ptr(new pcl::visualization::PCLVisualizer("initial"));
-			viewer->setBackgroundColor(255, 255, 255);
-			viewer->addCoordinateSystem(0.1);
-			viewer->initCameraParameters();
-			//viewer->setCameraPosition(0.8, 0.8, 0.8, share_data->object_center_world(0), share_data->object_center_world(1), share_data->object_center_world(2), 0, 0, 1);
-			viewer->addPointCloud<pcl::PointXYZRGB>(share_data->cloud_now, "cloud_now)");
-			while (!viewer->wasStopped())
-			{
-				viewer->spinOnce(100);
-				boost::this_thread::sleep(boost::posix_time::microseconds(100000));
-			}
-		}
 	
 		// get viewspace
 		int first_view_id = share_data->first_view_id;
@@ -385,7 +371,26 @@ public:
 		//������ʼ��
 		percept = new Perception_3D(share_data);
 
-		if (share_data->show) { //��ʾBBX�����λ�á�GT
+		if (share_data->show) { //show cloud now
+			pcl::visualization::PCLVisualizer::Ptr viewer = pcl::visualization::PCLVisualizer::Ptr(new pcl::visualization::PCLVisualizer("initial"));
+			viewer->setBackgroundColor(255, 255, 255);
+			viewer->addCoordinateSystem(0.1);
+			viewer->initCameraParameters();
+			pcl::visualization::Camera cam;
+			viewer->getCameraParameters(cam);
+			cam.window_size[0] = 1920;
+			cam.window_size[1] = 1080;
+			viewer->setCameraParameters(cam);
+			viewer->setCameraPosition(-0.2, 0.8, 1.0, share_data->object_center_world(0), share_data->object_center_world(1), share_data->object_center_world(2), 0, 0, 1);
+			viewer->addPointCloud<pcl::PointXYZRGB>(share_data->cloud_now, "cloud_now)");
+			while (!viewer->wasStopped())
+			{
+				viewer->spinOnce(100);
+				boost::this_thread::sleep(boost::posix_time::microseconds(100000));
+			}
+		}
+
+		if (share_data->show) { //show gt cloud
 			pcl::visualization::PCLVisualizer::Ptr viewer = pcl::visualization::PCLVisualizer::Ptr(new pcl::visualization::PCLVisualizer("GT"));
 			viewer->setBackgroundColor(255, 255, 255);
 			viewer->addCoordinateSystem(0.1);
@@ -401,10 +406,16 @@ public:
 
 		//filter gt cloud
 		pcl::VoxelGrid<pcl::PointXYZRGB> sor;
-		sor.setLeafSize(share_data->ground_truth_resolution/2, share_data->ground_truth_resolution/2, share_data->ground_truth_resolution/2);
+		sor.setLeafSize(share_data->ground_truth_resolution, share_data->ground_truth_resolution, share_data->ground_truth_resolution);
 		sor.setInputCloud(share_data->cloud_ground_truth);
 		sor.filter(*share_data->cloud_ground_truth);
 		cout << "filerted cloud_ground_truth->points.size() is " << share_data->cloud_ground_truth->points.size() << endl;
+
+		share_data->cloud_ground_truth_downsampled = pcl::PointCloud<pcl::PointXYZRGB>::Ptr(new pcl::PointCloud<pcl::PointXYZRGB>);
+		sor.setLeafSize(0.005f, 0.005f, 0.005f);
+		sor.setInputCloud(share_data->cloud_ground_truth);
+		sor.filter(*share_data->cloud_ground_truth_downsampled);
+		cout << "filerted cloud_ground_truth_downsampled->points.size() is " << share_data->cloud_ground_truth_downsampled->points.size() << endl;
 
 		auto ptr = share_data->cloud_ground_truth->points.begin();
 		for (int i = 0; i < share_data->cloud_ground_truth->points.size(); i++,ptr++) {
@@ -416,6 +427,9 @@ public:
 					share_data->ground_truth_model->setNodeValue(key, share_data->ground_truth_model->getProbHitLog(), true);
 					share_data->ground_truth_model->integrateNodeColor(key, (*ptr).r, (*ptr).g, (*ptr).b);
 				}
+				if(share_data->voxel_gt->find(key) == share_data->voxel_gt->end()) {
+					(*share_data->voxel_gt)[key] = 1;
+				}
 			}
 			//GT_sample�������
 			octomap::OcTreeKey key_sp;  bool key_have_sp = share_data->GT_sample->coordToKeyChecked(octomap::point3d((*ptr).x, (*ptr).y, (*ptr).z), key_sp);
@@ -424,6 +438,9 @@ public:
 				if (voxel_sp == NULL) {
 					share_data->GT_sample->setNodeValue(key_sp, share_data->GT_sample->getProbHitLog(), true);
 					share_data->GT_sample->integrateNodeColor(key_sp, (*ptr).r, (*ptr).g, (*ptr).b);
+				}
+				if(share_data->voxel_gt_sample->find(key_sp) == share_data->voxel_gt_sample->end()) {
+					(*share_data->voxel_gt_sample)[key_sp] = 1;
 				}
 			}
 			ptr++;
@@ -438,8 +455,8 @@ public:
 		share_data->init_voxels = 0;
 		int full_voxels = 0;
 		//��sample��ͳ���ܸ���
-		for (octomap::ColorOcTree::leaf_iterator it = share_data->GT_sample->begin_leafs(), end = share_data->GT_sample->end_leafs(); it != end; ++it){
-			if(it.getY() > share_data->min_z_table + share_data->octomap_resolution)
+		for (auto it = share_data->voxel_gt_sample->begin(); it != share_data->voxel_gt_sample->end(); it++) {
+			if(share_data->GT_sample->keyToCoord(it->first).z() > share_data->min_z_table + share_data->octomap_resolution)
 				share_data->init_voxels++;
 			full_voxels++;
 		}
@@ -449,10 +466,7 @@ public:
 		//ofstream fout_sample(share_data->save_path + "/GT_sample_voxels.txt");
 		//fout_sample << share_data->init_voxels << endl;
 		//��GT��ͳ���ܸ���
-		share_data->cloud_points_number = 0;
-		for (octomap::ColorOcTree::leaf_iterator it = share_data->ground_truth_model->begin_leafs(), end = share_data->ground_truth_model->end_leafs(); it != end; ++it) {
-			share_data->cloud_points_number++;
-		}
+		share_data->cloud_points_number = share_data->voxel_gt->size();
 		cout << "Map_GT has voxels " << share_data->cloud_points_number << endl;
 		//ofstream fout_gt(share_data->save_path + "/GT_voxels.txt");
 		//fout_gt << share_data->cloud_points_number << endl;
@@ -778,6 +792,118 @@ public:
 			}
 			break;
 		case WaitMoving:
+			//if the method is not (combined) one-shot and random, then use f_voxel to decide whether to stop
+			if(!(share_data->Combined_on == true || share_data->method_of_IG == 7 || share_data->method_of_IG == 8) && share_data->f_voxels.size() != iterations + 1){
+				//compute f_voxels
+				int f_voxels_num = 0;
+				for (octomap::ColorOcTree::leaf_iterator it = share_data->octo_model->begin_leafs(), end = share_data->octo_model->end_leafs(); it != end; ++it) {
+					double occupancy = (*it).getOccupancy();
+					if (fabs(occupancy - 0.5) < 1e-3) { // unknown
+						auto coordinate = it.getCoordinate();
+						if (coordinate.x() >= share_data->map_center(0) - share_data->map_size && coordinate.x() <= share_data->map_center(0) + share_data->map_size
+							&& coordinate.y() >= share_data->map_center(1) - share_data->map_size && coordinate.y() <= share_data->map_center(1) + share_data->map_size
+							&& coordinate.z() >= share_data->map_center(2) - share_data->map_size && coordinate.z() <= share_data->map_center(2) + share_data->map_size)
+						{
+							// compute the frontier voxels that is unknown and has at least one free and one occupied neighbor
+							int free_cnt = 0;
+							int occupied_cnt = 0;
+							for (int i = -1; i <= 1; i++)
+								for (int j = -1; j <= 1; j++)
+									for (int k = -1; k <= 1; k++)
+									{
+										if (i == 0 && j == 0 && k == 0) continue;
+										double x = coordinate.x() + i * share_data->octomap_resolution;
+										double y = coordinate.y() + j * share_data->octomap_resolution;
+										double z = coordinate.z() + k * share_data->octomap_resolution;
+										octomap::point3d neighbour(x, y, z);
+										octomap::OcTreeKey neighbour_key;  bool neighbour_key_have = share_data->octo_model->coordToKeyChecked(neighbour, neighbour_key);
+										if (neighbour_key_have) {
+											octomap::ColorOcTreeNode* neighbour_voxel = share_data->octo_model->search(neighbour_key);
+											if (neighbour_voxel != NULL) {
+												double neighbour_occupancy = neighbour_voxel->getOccupancy();
+												free_cnt += neighbour_occupancy < 0.5 ? 1 : 0;
+												occupied_cnt += neighbour_occupancy > 0.5 ? 1 : 0;
+											}
+										}
+									}
+							//edge
+							if (free_cnt >= 1 && occupied_cnt >= 1) {
+								f_voxels_num++;
+								//cout << "f voxel: " << coordinate.x() << " " << coordinate.y() << " " << coordinate.z() << endl;
+							}
+						}
+					}
+				}
+				share_data->f_voxels.push_back(f_voxels_num);
+				cout << "share_data->f_voxels.size() is " << share_data->f_voxels.size() << endl;
+
+				//save f_voxels_num for each iteration because the old f_voxels_nums may change according to the new octomap
+				share_data->access_directory(share_data->save_path + "/f_voxels");
+				ofstream fout_f_voxels_num(share_data->save_path + "/f_voxels/f_num" + to_string(iterations) + ".txt");
+				for(int i = 0; i < share_data->f_voxels.size(); i++){
+					fout_f_voxels_num << share_data->f_voxels[i] << endl;
+				}
+
+			    // check if the f_voxels_num is stable
+				if (share_data->f_stop_iter == -1) {
+					if (share_data->f_voxels.size() > 2) {
+						bool f_voxels_change = false;
+						//三次扫描过程中，连续两个f变化都小于阈值就结束
+						if (fabs(share_data->f_voxels[share_data->f_voxels.size() - 1] - share_data->f_voxels[share_data->f_voxels.size() - 2]) >= share_data->voxels_in_BBX * share_data->f_stop_threshold) {
+							f_voxels_change = true;
+						}
+						if (fabs(share_data->f_voxels[share_data->f_voxels.size() - 2] - share_data->f_voxels[share_data->f_voxels.size() - 3]) >= share_data->voxels_in_BBX * share_data->f_stop_threshold) {
+							f_voxels_change = true;
+						}
+						if (!f_voxels_change) {
+							cout << "two f_voxels change smaller than threshold. Record." << endl;
+							share_data->f_stop_iter = iterations;
+
+							ofstream fout_f_stop_views(share_data->save_path + "/f_voxels/f_stop_views.txt");
+							fout_f_stop_views << 1 << "\t" << share_data->f_stop_iter + 1 << endl; //1 means f_voxels stop
+						}
+					}
+					if (share_data->over == true && share_data->f_stop_iter == -1) {
+						cout << "Max iter reached. Record." << endl;
+						share_data->f_stop_iter = iterations;
+
+						ofstream fout_f_stop_views(share_data->save_path + "/f_voxels/f_stop_views.txt");
+						fout_f_stop_views << 0 << "\t" << share_data->f_stop_iter + 1 << endl; //0 means over
+					}
+				}
+				if (share_data->f_stop_iter_lenient == -1) {
+					if (share_data->f_voxels.size() > 2) {
+						bool f_voxels_change = false;
+						//三次扫描过程中，连续两个f变化都小于阈值就结束
+						if (fabs(share_data->f_voxels[share_data->f_voxels.size() - 1] - share_data->f_voxels[share_data->f_voxels.size() - 2]) >= share_data->voxels_in_BBX * share_data->f_stop_threshold_lenient) {
+							f_voxels_change = true;
+						}
+						if (fabs(share_data->f_voxels[share_data->f_voxels.size() - 2] - share_data->f_voxels[share_data->f_voxels.size() - 3]) >= share_data->voxels_in_BBX * share_data->f_stop_threshold_lenient) {
+							f_voxels_change = true;
+						}
+						if (!f_voxels_change) {
+							cout << "two f_voxels change smaller than threshold_lenient. Record." << endl;
+							share_data->f_stop_iter_lenient = iterations;
+
+							ofstream fout_f_stop_views(share_data->save_path + "/f_voxels/f_lenient_stop_views.txt");
+							fout_f_stop_views << 1 << "\t" << share_data->f_stop_iter_lenient + 1 << endl; //1 means f_voxels stop
+						}
+					}
+					if (share_data->over == true && share_data->f_stop_iter_lenient == -1) {
+						cout << "Max iter reached. Record." << endl;
+						share_data->f_stop_iter_lenient = iterations;
+
+						ofstream fout_f_stop_views(share_data->save_path + "/f_voxels/f_lenient_stop_views.txt");
+						fout_f_stop_views << 0 << "\t" << share_data->f_stop_iter_lenient + 1 << endl; //0 means over
+					}
+				}
+				if(iterations + 1 == share_data->mascvp_nbv_needed_views){
+					cout << "mascvp_nbv_needed_views reached. Record." << endl;
+
+					ofstream fout_mascvp_stop_views(share_data->save_path + "/f_voxels/mascvp_nbv_needed_views.txt");
+					fout_mascvp_stop_views << 1 << "\t" << iterations + 1 << endl; //1 means f_voxels stop
+				}
+			}
 			//virtual move
 			if (share_data->over) {
 				cout << "Progress over.Saving octomap and cloud." << endl;
@@ -831,18 +957,23 @@ void save_cloud_mid(pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud, string name) {
 }
 
 void create_view_space(View_Space** now_view_space, View* now_best_view, Share_Data* share_data, int iterations) {
-	//����ؼ�֡���λ��
-	share_data->now_camera_pose_world = (share_data->now_camera_pose_world * now_best_view->pose.inverse()).eval();;
+	//更新当前机器人位置
+	share_data->now_camera_pose_world = (share_data->now_camera_pose_world * now_best_view->pose.inverse()).eval();
+	//保存当前机器人位置
+	share_data->nbvs_pose_world.push_back(share_data->now_camera_pose_world);
+	share_data->access_directory(share_data->save_path + "/nbvs_pose_world");
+	ofstream fout_nbvs_pose_world(share_data->save_path + "/nbvs_pose_world/" + to_string(iterations) + ".txt");
+	fout_nbvs_pose_world << share_data->now_camera_pose_world <<endl;
 	//处理viewspace,如果不需要评估并且是one-shot路径就不更新OctoMap
-	if (share_data->evaluate_one_shot == 0 && share_data->method_of_IG == 7 && iterations > 0 + share_data->num_of_nbvs_combined);
-	else (*now_view_space)->update(iterations, share_data, share_data->cloud_final, share_data->clouds[iterations]);
-	//�����м�������
+	(*now_view_space)->update(iterations, share_data, share_data->cloud_final, share_data->clouds[iterations]);
+	//保存当前viewspace
 	if(share_data->is_save)	{
 		share_data->access_directory(share_data->save_path + "/clouds");
-		pcl::io::savePCDFileBinary<pcl::PointXYZRGB>(share_data->save_path + "/clouds/" + "pointcloud" + to_string(iterations) + ".pcd", *share_data->cloud_final);
+		pcl::io::savePCDFileBinary<pcl::PointXYZRGB>(share_data->save_path + "/clouds/" + "object" + to_string(iterations) + ".pcd", *share_data->cloud_final);
+		// pcl::io::savePCDFileBinary<pcl::PointXYZRGB>(share_data->save_path + "/clouds/" + "scene" + to_string(iterations) + ".pcd", *share_data->cloud_scene);
 		cout << "pointcloud" + to_string(iterations) << " saved" << endl;
 	}
-	//���±�־λ
+	//更新标志
 	share_data->now_view_space_processed = true;
 }
 
@@ -858,12 +989,12 @@ void create_views_information(Views_Information** now_views_infromation, View* n
 			for (int j = 0; j < 32; j++)
 				for (int k = 0; k < 32; k++)
 				{
-					double x = share_data->object_center_world(0) - share_data->predicted_size + share_data->octomap_resolution * i;
-					double y = share_data->object_center_world(1) - share_data->predicted_size + share_data->octomap_resolution * j;
-					double z = max(share_data->min_z_table, share_data->object_center_world(2) - share_data->predicted_size) + share_data->octomap_resolution * k;
+					double x = share_data->map_center(0) - share_data->map_size + share_data->octomap_resolution * i;
+					double y = share_data->map_center(1) - share_data->map_size + share_data->octomap_resolution * j;
+					double z = max(share_data->min_z_table, share_data->map_center(2) - share_data->map_size) + share_data->octomap_resolution * k;
 					auto node = share_data->octo_model->search(x, y, z);
-					if (node == NULL) cout << "what?" << endl;
-					fout << node->getOccupancy() << '\n';
+					if (node == NULL) fout << 0.307692 << '\n'; //超出地图的一般认为是空的
+					else fout << node->getOccupancy() << '\n';
 				}
 	}
 	else if (share_data->method_of_IG == 9) { //PCNBV
@@ -896,12 +1027,12 @@ void create_views_information(Views_Information** now_views_infromation, View* n
 				for (int j = 0; j < 32; j++)
 					for (int k = 0; k < 32; k++)
 					{
-						double x = share_data->object_center_world(0) - share_data->predicted_size + share_data->octomap_resolution * i;
-						double y = share_data->object_center_world(1) - share_data->predicted_size + share_data->octomap_resolution * j;
-						double z = max(share_data->min_z_table, share_data->object_center_world(2) - share_data->predicted_size) + share_data->octomap_resolution * k;
+						double x = share_data->map_center(0) - share_data->map_size + share_data->octomap_resolution * i;
+						double y = share_data->map_center(1) - share_data->map_size + share_data->octomap_resolution * j;
+						double z = max(share_data->min_z_table, share_data->map_center(2) - share_data->map_size) + share_data->octomap_resolution * k;
 						auto node = share_data->octo_model->search(x, y, z);
-						if (node == NULL) cout << "what?" << endl;
-						fout << node->getOccupancy() << '\n';
+						if (node == NULL) fout << 0.307692 << '\n'; //超出地图的一般认为是空的
+						else fout << node->getOccupancy() << '\n';
 					}
 			//view state
 			ofstream fout_viewstate(share_data->sc_net_path + "/data/" + share_data->name_of_pcd + "_r" + to_string(share_data->rotate_state) + "_v" + to_string(share_data->first_view_id) + "_vs.txt");

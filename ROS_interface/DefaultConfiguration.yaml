@@ -1,43 +1,51 @@
 %YAML:1.0
-model_path: "./src/ma_scvp_real/data/GT/"
-pre_path: "./src/ma_scvp_real/data/"
-nbv_net_path: "./src/Networks_pytorch/nbv-net-master"
-pcnbv_path: "./src/Networks_pytorch/PC-NBV_pytorch"
-sc_net_path: "./src/Networks_pytorch/ma_scvp"
-name_of_pcd: "Test_Object"
+model_path: "/home/user/pan/ma-scvp-real/src/ma_scvp_real/data/GT/"
+pre_path: "/home/user/pan/ma-scvp-real/src/ma_scvp_real/data/"
+nbv_net_path: "/home/user/pan/ma-scvp-real/src/Networks_pytorch/nbv-net-master"
+pcnbv_path: "/home/user/pan/ma-scvp-real/src/Networks_pytorch/PC-NBV_pytorch"
+sc_net_path: "/home/user/pan/ma-scvp-real/src/Networks_pytorch/ma_scvp"
+name_of_pcd: "cup_r0"
 method_of_IG : 9
 MA_SCVP_on : 1
 Combined_on : 1
 num_of_nbvs_combined : 1
+test_index : 0
+move_cost_on: 0
 octomap_resolution: 0.00625
 ground_truth_resolution: 0.002
-num_of_max_thread: 50
-num_of_max_iteration: 12
-first_view_id: 31
-height_of_ground: 0.008
-min_z_table: -0.002
-move_dis_pre_point: 0.05
+num_of_max_thread: 64
+num_of_max_iteration: 20
+first_view_id: 24
+height_of_ground: 0.010
+min_z_table: 0.003
+move_dis_pre_point: 0.03
 camera_to_object_dis: 0.15
-up_shift: 0.05
+up_shift: 0.08
 gt_mode: 0
 is_save: 1
-evaluate_one_shot: 1
 icp_distance: 0.003
 height_to_filter_arm: 0.13
-size_scale: 1.1
+size_scale: 1.10
+safe_distance: 0.08
+f_stop_threshold: 0.0004
+mascvp_nbv_needed_views: -1
+object_center_mode: 0
+map_scale: 1.05
+vsc_nabourhood_num: 2
 show: 0
+final_viewer: 0
+show_bbx: 1
 move_wait : 0
 p_unknown_upper_bound: 0.65
 p_unknown_lower_bound: 0.45
 num_of_views : 32
 cost_weight: 0.5
-move_cost_on: 0
 move_weight: 0.5
 robot_cost_negtive: 1
-skip_coefficient : 1.0
+skip_coefficient : 2.0
 num_of_max_flow_node : -1
-interesting_threshold : 0.65
-skip_threshold : 0.65
+interesting_threshold : 0.3
+skip_threshold : 0.2
 visble_rate : 0.7
 move_rate : 1.0
 color_width: 1280
@@ -53,3 +61,7 @@ color_k3: 0.
 color_p1: 0.
 color_p2: 0.
 depth_scale: 0.001
+table_x_min: -0.25
+table_x_max: 0.10
+table_y_min: 0.30
+table_y_max: 0.60

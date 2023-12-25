@@ -1,11 +1,12 @@
 %YAML:1.0
-pre_path: "D:/Data/MA-SCVP/Test/"
+pre_path: "D:/Data/MA-SCVP/Compare/"
 gt_path: "D:/Data/MA-SCVP/"
-model_path: "../3d_models/"
+model_path: "../../3D_models/PCD/"
 nbv_net_path: "D:/Networks_pytorch/nbv-net-master"
 pcnbv_path: "D:/Networks_pytorch/PC-NBV_pytorch"
 sc_net_path: "D:/Networks_pytorch/ma_scvp"
-name_of_pcd: "LM5"
+name_of_pcd: "LM6"
+max_num_of_thread: 1000000
 method_of_IG : 7
 MA_SCVP_on : 1
 Combined_on : 0
@@ -13,7 +14,9 @@ num_of_nbvs_combined : 1
 octomap_resolution: 0.00625
 ground_truth_resolution: 0.002
 num_of_max_iteration: 20
-is_save: 1
+f_stop_threshold: 0.0001
+use_saved_cloud: 1
+is_save: 0
 evaluate_one_shot: 1
 show: 0
 move_wait : 0
@@ -24,12 +27,12 @@ cost_weight: 0.5
 move_cost_on: 0
 move_weight: 0.5
 robot_cost_negtive: 1
-skip_coefficient : 1.0
+skip_coefficient : 2.0
 num_of_max_flow_node : -1
 interesting_threshold : 0.3
 skip_threshold : 0.2
 visble_rate : 0.7
-move_rate : 1.0
+move_rate : 0.4
 color_width: 1280
 color_height: 720
 color_fx: 9.1560668945312500e+02

@@ -53,8 +53,14 @@ public:
 	~Voxel_Information() {
 		for (int i = 0; i < mutex_voxels.size(); i++)
 			delete mutex_voxels[i];
+		mutex_voxels.clear();
+		mutex_voxels.shrink_to_fit();
 		for (int i = 0; i < mutex_views.size(); i++)
 			delete mutex_views[i];
+		mutex_views.clear();
+		mutex_views.shrink_to_fit();
+		convex.clear();
+		convex.shrink_to_fit();
 	}
 
 	void init_mutex_voxels(int init_voxels) {
@@ -562,6 +568,9 @@ public:
 	}
 
 	~View_Space() {
+		views.clear();
+		views.shrink_to_fit();
+		views_key_set->clear();
 		delete views_key_set;
 	}
 
@@ -609,6 +618,8 @@ public:
 					views[i].robot_cost = local_path.second;
 				}
 				cout << "viewspace readed." << endl;
+				points.clear();
+				points.shrink_to_fit();
 			}
 			else {
 				cout << "no view space. check!" << endl;
@@ -675,6 +686,7 @@ public:
 					octo_model->setNodeValue(x, y, z, (float)0, true); //初始化概率0.5，即logodds为0
 				}		
 		octo_model->updateInnerOccupancy();
+
 		share_data->init_entropy = 0;
 		share_data->voxels_in_BBX = 0;
 		for (octomap::ColorOcTree::leaf_iterator it = octo_model->begin_leafs(), end = octo_model->end_leafs(); it != end; ++it)
@@ -703,6 +715,12 @@ public:
 		//ofstream fout_cloud(share_data->save_path + "/quantitative/Cloud" + to_string(-1) + ".txt");
 		//fout_cloud << voxel->size() << '\t' << 1.0 * voxel->size() / share_data->GT_points_number << '\t' << 1.0 * voxel->size() / share_data->cloud_points_number<< endl;
 		delete voxel;
+
+		double map_init_time = clock() - now_time;
+		cout << "Octomap inited with executed time " << map_init_time << " ms." << endl;
+		//share_data->access_directory(share_data->save_path + "/update");
+		//ofstream fout_update_time(share_data->save_path + "/update/time" + to_string(-1) + ".txt");
+		//fout_update_time << map_init_time << endl;
 	}
 
 	void update(int _id, Share_Data* _share_data, pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud,pcl::PointCloud<pcl::PointXYZRGB>::Ptr update_cloud) {
@@ -730,7 +748,7 @@ public:
 			octo_model->integrateNodeColor(p.x, p.y, p.z, p.r, p.g, p.b);
 		}
 		octo_model->updateInnerOccupancy();
-		cout << "Octomap updated via cloud with executed time " << clock() - now_time << " ms." << endl;
+
 		map_entropy = 0;
 		occupied_voxels = 0;
 
@@ -793,6 +811,12 @@ public:
 		ofstream fout_cloud(share_data->save_path + "/quantitative/Cloud" + to_string(id) + ".txt");
 		fout_cloud << voxel->size() << '\t'  << 1.0 * voxel->size() / share_data->GT_points_number << '\t' << 1.0 * voxel->size() / share_data->cloud_points_number << endl;
 		delete voxel;
+
+		double map_update_time = clock() - now_time;
+		cout << "Octomap updated via cloud with executed time " << map_update_time << " ms." << endl;
+		share_data->access_directory(share_data->save_path + "/update");
+		ofstream fout_update_time(share_data->save_path + "/update/time" + to_string(id) + ".txt");
+		fout_update_time << map_update_time << endl;
 	}
 
 	void add_bbx_to_cloud(pcl::visualization::PCLVisualizer::Ptr viewer) {

@@ -24,6 +24,12 @@
 
 using namespace std;
 
+/*
+* OctreeKey.h中的KeyRay类默认最大尺寸很大，建议修改为1000
+	//const static size_t maxSize = 100000;
+	const static size_t maxSize = 1000;
+*/
+
 class Ray
 {
 public:
@@ -41,8 +47,17 @@ public:
 		stop = _stop;
 	}
 
+	Ray(const Ray& other) {
+		origin = other.origin;
+		end = other.end;
+		ray_set = new octomap::KeyRay(*other.ray_set);
+		start = other.start;
+		stop = other.stop;
+	}
+
 	~Ray() {
-		;
+		//注意释放ray_set的内存
+		delete ray_set;
 	}
 
 	bool operator ==(const Ray& other) const {//用于查询 		
@@ -81,7 +96,7 @@ public:
 		delete ray;
 	}
 
-	void clear() {
+	void reset() {
 		information_gain = 0;
 		visible = 1;
 		object_visible = 1;
@@ -92,7 +107,7 @@ public:
 
 //void ray_graph_thread_process(int ray_id,Ray_Information** rays_info, unordered_map<int, vector<int>>* rays_to_viwes_map, unordered_map<octomap::OcTreeKey, unordered_set<int>, octomap::OcTreeKey::KeyHash>* end_id_map, Voxel_Information* voxel_information);
 void information_gain_thread_process(Ray_Information** rays_info, unordered_map<int, vector<int>>* views_to_rays_map, View_Space* view_space, int pos);
-void ray_expand_thread_process(int* ray_num, Ray_Information** rays_info, unordered_map<Ray, int, Ray_Hash>* rays_map, unordered_map<int, vector<int>>* views_to_rays_map, unordered_map<int, vector<int>>* rays_to_viwes_map, octomap::ColorOcTree* octo_model, Voxel_Information* voxel_information, View_Space* view_space, rs2_intrinsics* color_intrinsics, pcl::PointCloud<pcl::PointXYZ>::Ptr frontier,int pos);
+//void ray_expand_thread_process(int* ray_num, Ray_Information** rays_info, unordered_map<Ray, int, Ray_Hash>* rays_map, unordered_map<int, vector<int>>* views_to_rays_map, unordered_map<int, vector<int>>* rays_to_viwes_map, octomap::ColorOcTree* octo_model, Voxel_Information* voxel_information, View_Space* view_space, rs2_intrinsics* color_intrinsics, pcl::PointCloud<pcl::PointXYZ>::Ptr frontier,int pos);
 void ray_cast_thread_process(int* ray_num, Ray_Information** rays_info, unordered_map<Ray, int, Ray_Hash>* rays_map, unordered_map<int, vector<int>>* views_to_rays_map, unordered_map<int, vector<int>>* rays_to_viwes_map, octomap::ColorOcTree* octo_model, Voxel_Information* voxel_information, View_Space* view_space, rs2_intrinsics* color_intrinsics,int pos);
 vector<int> get_xmax_xmin_ymax_ymin_in_hull(vector<cv::Point2f>& hull, rs2_intrinsics& color_intrinsics);
 bool is_pixel_in_convex(vector<cv::Point2f>& hull, cv::Point2f& pixel);
@@ -110,13 +125,13 @@ public:
 	Ray_Information** rays_info;
 	unordered_map<int, vector<int>>* views_to_rays_map;
 	unordered_map<int, vector<int>>* rays_to_viwes_map;
-	unordered_map<Ray,int, Ray_Hash>* rays_map;
+	unordered_map<Ray, int, Ray_Hash>* rays_map;
 	unordered_map<octomap::OcTreeKey,double, octomap::OcTreeKey::KeyHash>* occupancy_map;
 	unordered_map<octomap::OcTreeKey, double, octomap::OcTreeKey::KeyHash>* object_weight;
 	long long max_num_of_rays;
 	int ray_num;
 	double alpha;
-	int K = 6;
+	int K = 6;				// K netest neighbors for frontier foxels search
 	rs2_intrinsics color_intrinsics;
 	Voxel_Information* voxel_information;
 	octomap::ColorOcTree* octo_model;
@@ -126,14 +141,26 @@ public:
 	int edge_cnt;
 
 	~Views_Information() {
+		views_to_rays_map->clear();
 		delete views_to_rays_map;
+		//cout << "views_to_rays_map clear" << endl;
+		rays_to_viwes_map->clear();
 		delete rays_to_viwes_map;
+		//cout << "rays_to_viwes_map clear" << endl;
+		rays_map->clear();
 		delete rays_map;
+		//cout << "rays_map clear" << endl;
+		occupancy_map->clear();
 		delete occupancy_map;
+		//cout << "occupancy_map clear" << endl;
+		object_weight->clear();
 		delete object_weight;
-		for (int i = 0; i < ray_num; i++)
+		//cout << "object_weight clear" << endl;
+		for (int i = 0; i < ray_num; i++) {
 			delete rays_info[i];
-		delete rays_info;
+		}
+		delete[] rays_info;
+		//cout << "rays_info clear" << endl;
 	}
 
 	Views_Information(Share_Data* share_data, Voxel_Information* _voxel_information , View_Space* view_space,int iterations)
@@ -204,9 +231,17 @@ public:
 					}
 				}
 			}
+			pointIdxNKNSearch.clear();
+			pointIdxNKNSearch.shrink_to_fit();
+			pointNKNSquaredDistance.clear();
+			pointNKNSquaredDistance.shrink_to_fit();
 		}
-		cout << "occupancy_map is " << occupancy_map->size() << endl;
 		cout << "edge is " << edge->points.size() << endl;
+		points.clear();
+		points.shrink_to_fit();
+		edge->points.clear();
+		edge->points.shrink_to_fit();
+		cout << "occupancy_map is " << occupancy_map->size() << endl;
 		cout << "object_map is " << object_weight->size() << endl;
 		//根据BBX计算最多有多少射线，射线个数最多为表面积大小*体积，用于分配指针内存
 		double pre_line_point = 2.0 * map_size / octomap_resolution;
@@ -217,56 +252,56 @@ public:
 		rays_info = new Ray_Information * [max_num_of_rays];
 		cout << "full rays num is " << max_num_of_rays << endl;
 		//计算BBX的八个顶点，用于划定射线范围
-		vector<Eigen::Vector4d> convex_3d;
+		voxel_information->convex.clear();
+		voxel_information->convex.shrink_to_fit();
 		double x1 = view_space->object_center_world(0) - map_size;
 		double x2 = view_space->object_center_world(0) + map_size;
 		double y1 = view_space->object_center_world(1) - map_size;
 		double y2 = view_space->object_center_world(1) + map_size;
 		double z1 = view_space->object_center_world(2) - map_size;
 		double z2 = view_space->object_center_world(2) + map_size;
-		convex_3d.push_back(Eigen::Vector4d(x1, y1, z1, 1));
-		convex_3d.push_back(Eigen::Vector4d(x1, y2, z1, 1));
-		convex_3d.push_back(Eigen::Vector4d(x2, y1, z1, 1));
-		convex_3d.push_back(Eigen::Vector4d(x2, y2, z1, 1));
-		convex_3d.push_back(Eigen::Vector4d(x1, y1, z2, 1));
-		convex_3d.push_back(Eigen::Vector4d(x1, y2, z2, 1));
-		convex_3d.push_back(Eigen::Vector4d(x2, y1, z2, 1));
-		convex_3d.push_back(Eigen::Vector4d(x2, y2, z2, 1));
-		voxel_information->convex = convex_3d;
+		voxel_information->convex.push_back(Eigen::Vector4d(x1, y1, z1, 1));
+		voxel_information->convex.push_back(Eigen::Vector4d(x1, y2, z1, 1));
+		voxel_information->convex.push_back(Eigen::Vector4d(x2, y1, z1, 1));
+		voxel_information->convex.push_back(Eigen::Vector4d(x2, y2, z1, 1));
+		voxel_information->convex.push_back(Eigen::Vector4d(x1, y1, z2, 1));
+		voxel_information->convex.push_back(Eigen::Vector4d(x1, y2, z2, 1));
+		voxel_information->convex.push_back(Eigen::Vector4d(x2, y1, z2, 1));
+		voxel_information->convex.push_back(Eigen::Vector4d(x2, y2, z2, 1));
 		//分配视点的射线生成器
-		thread** ray_caster = new thread *[view_space->views.size()];
+		vector<thread> ray_caster;
 		//射线初始下标从0开始
 		ray_num = 0;
-		for (int i = 0; i < view_space->views.size(); i++) {
+		for (int i = 0; i < view_space->views.size(); i += share_data->max_num_of_thread) {
 			//对该视点分发生成射线的线程
-			ray_caster[i] = new thread(ray_cast_thread_process, &ray_num, rays_info, rays_map, views_to_rays_map, rays_to_viwes_map, octo_model, voxel_information, view_space, &color_intrinsics, i);
+			for (int j = 0; j < share_data->max_num_of_thread && i + j < view_space->views.size(); j++) {
+				ray_caster.push_back(thread(ray_cast_thread_process, &ray_num, rays_info, rays_map, views_to_rays_map, rays_to_viwes_map, octo_model, voxel_information, view_space, &color_intrinsics, i + j));
+			}
+			//等待每个视点射线生成器计算完成
+			for (int j = 0; j < share_data->max_num_of_thread && i + j < view_space->views.size(); j++) {
+				ray_caster[i + j].join();
+			}
 		}
-		//等待每个视点射线生成器计算完成
-		for (int i = 0; i < view_space->views.size(); i++) {
-			(*ray_caster[i]).join();
-		}
-		//释放内存
-		for (int i = 0; i < view_space->views.size(); i++) {
-			ray_caster[i]->~thread();
-		}
-		delete ray_caster;
+		ray_caster.clear();
+		ray_caster.shrink_to_fit();
 		cout << "ray_num is " << ray_num << endl;
 		cout << "All views' rays generated with executed time " << clock() - now_time << " ms. Startring compution." << endl;
 		//为每条射线分配一个线程
 		now_time = clock();
-		thread** rays_process = new thread* [ray_num];
-		for (int i = 0; i < ray_num; i++) {
-			rays_process[i] = new thread(ray_information_thread_process, i, rays_info, rays_map, occupancy_map, object_weight, octo_model, voxel_information, view_space, method);
+		vector<thread> rays_process;
+		for (int i = 0; i < ray_num; i += share_data->max_num_of_thread) {
+			//对该视点分发生成射线的线程
+			for (int j = 0; j < share_data->max_num_of_thread && i + j < ray_num; j++) {
+				rays_info[i + j]->reset();
+				rays_process.push_back(thread(ray_information_thread_process, i + j, rays_info, rays_map, occupancy_map, object_weight, octo_model, voxel_information, view_space, method));
+			}
+			//等待每个视点射线生成器计算完成
+			for (int j = 0; j < share_data->max_num_of_thread && i + j < ray_num; j++) {
+				rays_process[i + j].join();
+			}
 		}
-		//等待射线计算完成
-		for (int i = 0; i < ray_num; i++) {
-			(*rays_process[i]).join();	
-		}
-		//释放内存
-		for (int i = 0; i < ray_num; i++) {
-			rays_process[i]->~thread();
-		}
-		delete rays_process;
+		rays_process.clear();
+		rays_process.shrink_to_fit();
 		double cost_time = clock() - now_time;
 		cout << "All rays' threads over with executed time " << cost_time << " ms." << endl;
 		share_data->access_directory(share_data->save_path + "/run_time");
@@ -274,20 +309,19 @@ public:
 		fout << cost_time << endl;
 		//分配视点的信息统计器
 		now_time = clock();
-		thread** view_gain = new thread * [view_space->views.size()];
-		for (int i = 0; i < view_space->views.size(); i++) {
+		vector<thread> view_gain;
+		for (int i = 0; i < view_space->views.size(); i += share_data->max_num_of_thread) {
 			//对该视点分发信息统计的线程
-			view_gain[i] = new thread(information_gain_thread_process, rays_info, views_to_rays_map, view_space, i);
+			for (int j = 0; j < share_data->max_num_of_thread && i + j < view_space->views.size(); j++) {
+				view_gain.push_back(thread(information_gain_thread_process, rays_info, views_to_rays_map, view_space, i + j));
+			}
+			//等待每个视点信息统计完成
+			for (int j = 0; j < share_data->max_num_of_thread && i + j < view_space->views.size(); j++){
+				view_gain[i + j].join();
+			}
 		}
-		//等待每个视点信息统计完成
-		for (int i = 0; i < view_space->views.size(); i++) {
-			(*view_gain[i]).join();
-		}
-		//释放内存
-		for (int i = 0; i < view_space->views.size(); i++) {
-			view_gain[i]->~thread();
-		}
-		delete view_gain;
+		view_gain.clear();
+		view_gain.shrink_to_fit();
 		cout << "All views' gain threads over with executed time " << clock() - now_time << " ms." << endl;
 	}
 	
@@ -313,10 +347,8 @@ public:
 			view_space->views[i].voxel_num = 0;
 		}
 		//避免重复search
-		delete occupancy_map;
-		occupancy_map = new unordered_map<octomap::OcTreeKey, double, octomap::OcTreeKey::KeyHash>();
-		delete object_weight;
-		object_weight = new unordered_map<octomap::OcTreeKey, double, octomap::OcTreeKey::KeyHash>();
+		occupancy_map->clear();
+		object_weight->clear();
 		//更新frontier
 		vector<octomap::point3d> points;
 		pcl::PointCloud<pcl::PointXYZ>::Ptr edge(new pcl::PointCloud<pcl::PointXYZ>);
@@ -358,8 +390,16 @@ public:
 					}
 				}
 			}
+			pointIdxNKNSearch.clear();
+			pointIdxNKNSearch.shrink_to_fit();
+			pointNKNSquaredDistance.clear();
+			pointNKNSquaredDistance.shrink_to_fit();
 		}
 		cout << "edge is " << edge->points.size() << endl;
+		points.clear();
+		points.shrink_to_fit();
+		edge->points.clear();
+		edge->points.shrink_to_fit();
 		cout << "object_map is " << object_weight->size() << endl;
 		cout << "occupancy_map is " << occupancy_map->size() << endl;
 		cout << "frontier updated with executed time " << clock() - now_time << " ms." << endl;
@@ -371,94 +411,93 @@ public:
 		}
 		//如果重生成，则更新数据结构
 		if (regenerate) {
+			//清除map
+			views_to_rays_map->clear();
+			rays_to_viwes_map->clear();
+			rays_map->clear();
 			//重计算最大射线数量，从0开始
 			double pre_line_point = 2.0 * map_size / octomap_resolution;
 			//long long superficial = ceil(5.0 * pre_line_point * pre_line_point);
 			long long volume = ceil(pre_line_point * pre_line_point * pre_line_point);
 			//max_num_of_rays = superficial* volume * share_data->num_of_views;
 			max_num_of_rays = volume * share_data->num_of_views;
+			for (int i = 0; i < ray_num; i++)
+				delete rays_info[i];
 			delete[] rays_info;
 			rays_info = new Ray_Information * [max_num_of_rays];
 			cout << "full rays num is " << max_num_of_rays << endl;
-			ray_num = 0;
-			delete views_to_rays_map;
-			views_to_rays_map = new unordered_map<int, vector<int>>();
-			delete rays_to_viwes_map;
-			rays_to_viwes_map = new unordered_map<int, vector<int>>();
-			delete rays_map;
-			rays_map = new unordered_map<Ray, int, Ray_Hash>();
-
 			//计算BBX的八个顶点，用于划定射线范围
-			vector<Eigen::Vector4d> convex_3d;
+			voxel_information->convex.clear();
+			voxel_information->convex.shrink_to_fit();
 			double x1 = view_space->object_center_world(0) - map_size;
 			double x2 = view_space->object_center_world(0) + map_size;
 			double y1 = view_space->object_center_world(1) - map_size;
 			double y2 = view_space->object_center_world(1) + map_size;
 			double z1 = view_space->object_center_world(2) - map_size;
 			double z2 = view_space->object_center_world(2) + map_size;
-			convex_3d.push_back(Eigen::Vector4d(x1, y1, z1, 1));
-			convex_3d.push_back(Eigen::Vector4d(x1, y2, z1, 1));
-			convex_3d.push_back(Eigen::Vector4d(x2, y1, z1, 1));
-			convex_3d.push_back(Eigen::Vector4d(x2, y2, z1, 1));
-			convex_3d.push_back(Eigen::Vector4d(x1, y1, z2, 1));
-			convex_3d.push_back(Eigen::Vector4d(x1, y2, z2, 1));
-			convex_3d.push_back(Eigen::Vector4d(x2, y1, z2, 1));
-			convex_3d.push_back(Eigen::Vector4d(x2, y2, z2, 1));
-			voxel_information->convex = convex_3d;
+			voxel_information->convex.push_back(Eigen::Vector4d(x1, y1, z1, 1));
+			voxel_information->convex.push_back(Eigen::Vector4d(x1, y2, z1, 1));
+			voxel_information->convex.push_back(Eigen::Vector4d(x2, y1, z1, 1));
+			voxel_information->convex.push_back(Eigen::Vector4d(x2, y2, z1, 1));
+			voxel_information->convex.push_back(Eigen::Vector4d(x1, y1, z2, 1));
+			voxel_information->convex.push_back(Eigen::Vector4d(x1, y2, z2, 1));
+			voxel_information->convex.push_back(Eigen::Vector4d(x2, y1, z2, 1));
+			voxel_information->convex.push_back(Eigen::Vector4d(x2, y2, z2, 1));
 			//分配视点的射线生成器
-			thread** ray_caster = new thread * [view_space->views.size()];
-			for (int i = 0; i < view_space->views.size(); i++) {
+			vector<thread> ray_caster;
+			//射线初始下标从0开始
+			ray_num = 0;
+			for (int i = 0; i < view_space->views.size(); i += share_data->max_num_of_thread) {
 				//对该视点分发生成射线的线程
-				ray_caster[i] = new thread(ray_cast_thread_process, &ray_num, rays_info, rays_map, views_to_rays_map, rays_to_viwes_map, octo_model, voxel_information, view_space, &color_intrinsics, i);
+				for (int j = 0; j < share_data->max_num_of_thread && i + j < view_space->views.size(); j++){
+					ray_caster.push_back(thread(ray_cast_thread_process, &ray_num, rays_info, rays_map, views_to_rays_map, rays_to_viwes_map, octo_model, voxel_information, view_space, &color_intrinsics, i + j));
+				}
+				//等待每个视点射线生成器计算完成
+				for (int j = 0; j < share_data->max_num_of_thread && i + j < view_space->views.size(); j++){
+					ray_caster[i + j].join();
+				}
 			}
-			//等待每个视点射线生成器计算完成
-			for (int i = 0; i < view_space->views.size(); i++) {
-				(*ray_caster[i]).join();
-			}
-			//释放内存
-			for (int i = 0; i < view_space->views.size(); i++) {
-				ray_caster[i]->~thread();
-			}
-			delete ray_caster;
+			ray_caster.clear();
+			ray_caster.shrink_to_fit();
 			cout << "ray_num is " << ray_num << endl;
 			cout << "All views' rays generated with executed time " << clock() - now_time << " ms. Startring compution." << endl;
 		}
-		//为每条射线分配一个线程
+		//为每条射线分配一个线程，务必记得重置
 		now_time = clock();
-		thread** rays_process = new thread * [ray_num];
-		for (int i = 0; i < ray_num; i++) {
-			rays_info[i]->clear();
-			rays_process[i] = new thread(ray_information_thread_process, i, rays_info, rays_map, occupancy_map, object_weight, octo_model, voxel_information, view_space, method);
+		vector<thread> rays_process;
+		for (int i = 0; i < ray_num; i += share_data->max_num_of_thread) {
+			for (int j = 0; j < share_data->max_num_of_thread && i + j < ray_num; j++){
+				//注意这里重新计算了射线的信息，所以需要重置!!!!!!
+				rays_info[i + j]->reset();
+				//对该视点分发生成射线的线程
+				rays_process.push_back(thread(ray_information_thread_process, i + j, rays_info, rays_map, occupancy_map, object_weight, octo_model, voxel_information, view_space, method));
+			}
+			//等待每个视点射线生成器计算完成
+			for (int j = 0; j < share_data->max_num_of_thread && i + j < ray_num; j++){
+				rays_process[i + j].join();
+			}
 		}
-		//等待射线计算完成
-		for (int i = 0; i < ray_num; i++) {
-			(*rays_process[i]).join();
-		}
-		//释放内存
-		for (int i = 0; i < ray_num; i++) {
-			rays_process[i]->~thread();
-		}
-		delete rays_process;
+		rays_process.clear();
+		rays_process.shrink_to_fit();
 		double cost_time = clock() - now_time;
 		cout << "All rays' threads over with executed time " << cost_time << " ms." << endl;
 		share_data->access_directory(share_data->save_path + "/run_time");
 		ofstream fout(share_data->save_path + "/run_time/IG" + to_string(view_space->id) + ".txt");
 		fout << cost_time << endl;
 		now_time = clock();
-		thread** view_gain = new thread * [view_space->views.size()];
-		for (int i = 0; i < view_space->views.size(); i++) {
+		vector<thread> view_gain;
+		for (int i = 0; i < view_space->views.size(); i += share_data->max_num_of_thread) {
 			//对该视点分发信息统计的线程
-			view_gain[i] = new thread(information_gain_thread_process, rays_info, views_to_rays_map, view_space, i);
+			for (int j = 0; j < share_data->max_num_of_thread && i + j < view_space->views.size(); j++) {
+				view_gain.push_back(thread(information_gain_thread_process, rays_info, views_to_rays_map, view_space, i + j));
+			}	
+			//等待每个视点信息统计完成
+			for (int j = 0; j < share_data->max_num_of_thread && i + j < view_space->views.size(); j++) {
+				view_gain[i + j].join();
+			}
 		}
-		//等待每个视点信息统计完成
-		for (int i = 0; i < view_space->views.size(); i++) {
-			(*view_gain[i]).join();
-		}
-		//释放内存
-		for (int i = 0; i < view_space->views.size(); i++) {
-			view_gain[i]->~thread();
-		}
-		delete view_gain;
+		view_gain.clear();
+		view_gain.shrink_to_fit();
 		cout << "All views' gain threads over with executed time " << clock() - now_time << " ms." << endl;
 	}
 };
@@ -530,7 +569,8 @@ void ray_cast_thread_process(int* ray_num, Ray_Information** rays_info, unordere
 					//获取射线数组，不包含末节点
 					bool point_on_ray_getted = octo_model->computeRayKeys(origin, end_point, *ray_set);
 					if (!point_on_ray_getted) cout << "Warning. ray cast with wrong max_range." << endl;
-					if (ray_set->size() > 950) cout << ray_set->size() << " rewrite the vector size in octreekey.h." << endl;
+					//cout << ray_set->size() << " rewrite the vector size in octreekey.h." << endl;
+					if (ray_set->size() > 900) cout << ray_set->size() << " rewrite the vector size in octreekey.h." << endl;
 					//把终点放入射线组
 					ray_set->addKey(key_end);
 					//第一个非空节点作为射线起点，尾巴开始最后一个非空元素作为射线终点
@@ -575,7 +615,7 @@ void ray_cast_thread_process(int* ray_num, Ray_Information** rays_info, unordere
 	else {
 		cout << pos << "th view out of map.check." << endl;
 	}
-	//cout << "rays " << rays.size() <<" num "<<num<< endl;
+	//cout << "rays " << rays.size() << endl;
 	//该视点射线下标的数组
 	vector<int> ray_ids;
 	ray_ids.resize(rays.size());
@@ -588,7 +628,8 @@ void ray_cast_thread_process(int* ray_num, Ray_Information** rays_info, unordere
 		auto hash_this_ray = rays_map->find(*rays[i]);
 		//如果没有重复的，就保存该射线
 		if (hash_this_ray == rays_map->end()) {
-			(*rays_map)[*rays[i]] = ray_id;
+			//要深拷贝过去，析构map时由于指向同一个实例，会重复删除
+			(*rays_map)[Ray(*rays[i])] = ray_id;
 			ray_ids[i] = ray_id;
 			//创造射线计算类
 			rays_info[ray_id] = new Ray_Information(rays[i]);
@@ -599,9 +640,10 @@ void ray_cast_thread_process(int* ray_num, Ray_Information** rays_info, unordere
 		}
 		//如果有重复的，说明其他视点也算到了该射线，就把相应的id放入下标数组
 		else {
-			ray_ids[i] = hash_this_ray->second;
-			delete rays[i]->ray_set;
+			//把重复的射线删除
+			delete rays[i];
 			//其他视点已经记录的射线，把本视点的记录放进去
+			ray_ids[i] = hash_this_ray->second;
 			vector<int> view_ids = (*rays_to_viwes_map)[ray_ids[i]];
 			view_ids.push_back(pos);
 			(*rays_to_viwes_map)[ray_ids[i]] = view_ids;
@@ -843,6 +885,25 @@ public:
 	double eps = 1e-3;
 	bool isZero(const double& val) { return abs(val) < eps; }
 
+	~MCMF_solver(){
+		for (int i = 0; i < G.size(); i++) {
+			G[i].clear();
+			G[i].shrink_to_fit();
+		}
+		G.clear();
+		G.shrink_to_fit();
+		d.clear();
+		d.shrink_to_fit();
+		a.clear();
+		a.shrink_to_fit();
+		p.clear();
+		p.shrink_to_fit();
+		inq.clear();
+		inq.shrink_to_fit();
+		edges.clear();
+		edges.shrink_to_fit();
+	}
+
 	void init(int n) {
 		this->n = n;
 		G.resize(n);
@@ -946,6 +1007,9 @@ public:
 				}
 		//cerr << endl;
 
+		vis.clear();
+		vis.shrink_to_fit();
+
 		return ret;
 	}
 };
@@ -999,18 +1063,17 @@ public:
 		voxel_id_map = new unordered_map<octomap::OcTreeKey, int, octomap::OcTreeKey::KeyHash>;
 		//并行遍历每条射线上的体素累加至对应视点
 		nz = 0;
-		thread** adjacency_list_process = new thread * [views_information->ray_num];
-		for (int i = 0; i < views_information->ray_num; i++) {
-			adjacency_list_process[i] = new thread(adjacency_list_MF_thread_process, i, &nz, nx, nx + ny, voxel_id_map, bipartite_list, view_space, views_information, voxel_information, share_data);
+		vector<thread> adjacency_list_process;
+		for (int i = 0; i < views_information->ray_num; i += share_data->max_num_of_thread) {
+			for (int j = 0; j < share_data->max_num_of_thread && i + j < views_information->ray_num; j++) {
+				adjacency_list_process.push_back(thread(adjacency_list_MF_thread_process, i + j, &nz, nx, nx + ny, voxel_id_map, bipartite_list, view_space, views_information, voxel_information, share_data));
+			}
+			for (int j = 0; j < share_data->max_num_of_thread && i + j < views_information->ray_num; j++) {
+				adjacency_list_process[i + j].join();
+			}
 		}
-		for (int i = 0; i < views_information->ray_num; i++) {
-			(*adjacency_list_process[i]).join();
-		}
-		//释放内存
-		for (int i = 0; i < views_information->ray_num; i++) {
-			adjacency_list_process[i]->~thread();
-		}
-		delete adjacency_list_process;
+		adjacency_list_process.clear();
+		adjacency_list_process.shrink_to_fit();
 		//输出一下具体的图大小
 		if (nz != voxel_id_map->size()) cout << "node_z wrong." << endl;
 		int num_of_all_edge = 0;
@@ -1025,6 +1088,15 @@ public:
 	}
 
 	~views_voxels_MF() {
+		for (int i = 0; i < bipartite_list->size(); i++) {
+			(*bipartite_list)[i].clear();
+			(*bipartite_list)[i].shrink_to_fit();
+		}
+		bipartite_list->clear();
+		bipartite_list->shrink_to_fit();
+		voxel_id_map->clear();
+		view_id_set.clear();
+		view_id_set.shrink_to_fit();
 		delete bipartite_list;
 		delete voxel_id_map;
 		delete mcmf;
@@ -1034,8 +1106,9 @@ public:
 void adjacency_list_MF_thread_process(int ray_id, int* nz, int ray_index_shift, int voxel_index_shift, unordered_map<octomap::OcTreeKey, int, octomap::OcTreeKey::KeyHash>* voxel_id_map, vector<vector<pair<int, double>>>* bipartite_list, View_Space* view_space, Views_Information* views_information, Voxel_Information* voxel_information, Share_Data* share_data) {
 	//该射线被哪些视点看到，加入图中
 	vector<int> views_id = (*views_information->rays_to_viwes_map)[ray_id];
-	for (int i = 0; i < views_id.size(); i++)
+	for (int i = 0; i < views_id.size(); i++) {
 		(*bipartite_list)[ray_id + ray_index_shift].push_back(make_pair(views_id[i], 0.0));
+	}
 	//仅保留感兴趣体素
 	double visible = 1.0;
 	octomap::KeyRay::iterator first = views_information->rays_info[ray_id]->ray->start;
@@ -1076,6 +1149,8 @@ void adjacency_list_MF_thread_process(int ray_id, int* nz, int ray_index_shift, 
 			}
 		}
 	}
+	views_id.clear();
+	views_id.shrink_to_fit();
 }
 
 /*
@@ -1163,18 +1238,17 @@ public:
 		voxel_id_map = new unordered_map<octomap::OcTreeKey, int, octomap::OcTreeKey::KeyHash>;
 		//并行遍历每条射线上的体素累加至对应视点
 		ny = 0;
-		thread** adjacency_list_process = new thread * [views_information->ray_num];
-		for (int i = 0; i < views_information->ray_num; i++) {
-			adjacency_list_process[i] = new thread(adjacency_list_GMC_thread_process, i, &ny, voxel_id_map, bipartite_list, view_space, views_information, voxel_information, share_data);
+		vector<thread> adjacency_list_process;
+		for (int i = 0; i < views_information->ray_num; i += share_data->max_num_of_thread) {
+			for (int j = 0; j < share_data->max_num_of_thread && i + j < views_information->ray_num; j++) {
+				adjacency_list_process.push_back(thread(adjacency_list_GMC_thread_process, i + j, &ny, voxel_id_map, bipartite_list, view_space, views_information, voxel_information, share_data));
+			}
+			for (int j = 0; j < share_data->max_num_of_thread && i + j < views_information->ray_num; j++) {
+				adjacency_list_process[i + j].join();
+			}
 		}
-		for (int i = 0; i < views_information->ray_num; i++) {
-			(*adjacency_list_process[i]).join();
-		}
-		//释放内存
-		for (int i = 0; i < views_information->ray_num; i++) {
-			adjacency_list_process[i]->~thread();
-		}
-		delete adjacency_list_process;
+		adjacency_list_process.clear();
+		adjacency_list_process.shrink_to_fit();
 		if (ny != voxel_id_map->size()) cout << "node_y wrong." << endl;
 		cout << "adjacency list with interested voxels num " << ny << " getted with executed time " << clock() - now_time << " ms." << endl;
 		//获取视点移动权重
@@ -1314,6 +1388,35 @@ public:
 	}
 
 	~views_voxels_GMC() {
+		for (int i = 0; i < bipartite_list->size(); i++) {
+			(*bipartite_list)[i].clear();
+			(*bipartite_list)[i].shrink_to_fit();
+		}
+		bipartite_list->clear();
+		bipartite_list->shrink_to_fit();
+		for (int i = 0; i < bipartite_graph.size(); i++) {
+			bipartite_graph[i].clear();
+			bipartite_graph[i].shrink_to_fit();
+		}
+		bipartite_graph.clear();
+		bipartite_graph.shrink_to_fit();
+		coverage_weight.clear();
+		coverage_weight.shrink_to_fit();
+		move_cost.clear();
+		move_cost.shrink_to_fit();
+		voxel_id_map->clear();
+		for (int i = 0; i < y.size(); i++) {
+			y[i].clear();
+			y[i].shrink_to_fit();
+		}
+		y.clear();
+		y.shrink_to_fit();
+		z.clear();
+		z.shrink_to_fit();
+		mask_x.clear();
+		mask_x.shrink_to_fit();
+		mask_y.clear();
+		mask_y.shrink_to_fit();
 		delete bipartite_list;
 		delete voxel_id_map;
 		delete env;

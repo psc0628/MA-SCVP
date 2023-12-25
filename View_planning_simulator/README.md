@@ -26,13 +26,11 @@ If you run with combined pipeline, you have to input an NBV method, i.e., do not
 If you run with NBV methods, you can change the number of maximum itearitons by "num_of_max_iteration" in DefaultConfiguration.yaml. 
 After you run a network test, you have to remove "data" and "log" folder in the network path for re-testing.   
 ### Mode 0
-The system will test the object "name_of_pcd" by "method_of_IG" method in DefaultConfiguration.yaml with rotation 0 and intital view 0.  
+The system will genertate the ground truth point clouds of all visble voxels for all input objects. This will speed up evluation.  
 ### Mode 1
-The system will test all input objects by the input method with rotation 0 and intital view 0.  
+The system will test the object "name_of_pcd" by "method_of_IG" method in DefaultConfiguration.yaml with rotation 0 and intital view 0.  
 ### Mode 2
-The system will test all input objects by the input method with rotations and intital views in lines 1153-1167 of main.cpp.  
-### Mode 3
-The system will genertate the ground truth number of all visble voxels for all input objects.  
-For our models, we provide this in GT_points_num folder.  
+The system will test all input objects by the input method with rotations and intital views in lines 1369-1411 of main.cpp.  
+
 
 

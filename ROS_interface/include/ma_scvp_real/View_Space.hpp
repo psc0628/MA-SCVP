@@ -57,6 +57,12 @@ public:
 			delete mutex_views[i];
 	}
 
+	void clear_mutex_voxels(){
+		for (int i = 0; i < mutex_voxels.size(); i++)
+			delete mutex_voxels[i];
+		mutex_voxels.clear();
+	}
+
 	void init_mutex_voxels(int init_voxels) {
 		mutex_voxels.resize(init_voxels);
 		for (int i = 0; i < mutex_voxels.size(); i++)
@@ -509,13 +515,16 @@ pair<int, double> get_local_path(Eigen::Vector3d M, Eigen::Vector3d N, Eigen::Ve
 }
 
 
-double get_trajectory_xyz(vector<Eigen::Vector3d>& points, Eigen::Vector3d M, Eigen::Vector3d N, Eigen::Vector3d O, double predicted_size, double distanse_of_pre_move, double camera_to_object_dis) {
+int get_trajectory_xyz(vector<Eigen::Vector3d>& points, Eigen::Vector3d M, Eigen::Vector3d N, Eigen::Vector3d O, double predicted_size, double distanse_of_pre_move, double camera_to_object_dis) {
     int num_of_path = -1;
     double x0, y0, z0, x1, y1, z1, x2, y2, z2, a, b, c, delta, t3, t4, x3, y3, z3, x4, y4, z4, r;
     x1 = M(0), y1 = M(1), z1 = M(2);
     x2 = N(0), y2 = N(1), z2 = N(2);
     x0 = O(0), y0 = O(1), z0 = O(2);
-    r = predicted_size * 1.1;
+	//不考虑相机深度距离
+    //r = predicted_size * 1.1;
+	//考虑相机深度距离
+	r = predicted_size + camera_to_object_dis;
     //计算直线MN与球O-r的交点PQ
     a = pow2(x2 - x1) + pow2(y2 - y1) + pow2(z2 - z1);
     b = 2.0 * ((x2 - x1) * (x1 - x0) + (y2 - y1) * (y1 - y0) + (z2 - z1) * (z1 - z0));
@@ -701,12 +710,14 @@ public:
 	vector<View> views;							//�ռ�Ĳ����ӵ�
 	Eigen::Vector3d object_center_world;		//��������
 	double predicted_size;						//����BBX�뾶
+	Eigen::Vector3d map_center;
+	double map_size;
 	int id;										//�ڼ���nbv����
 	Eigen::Matrix4d now_camera_pose_world;		//���nbv���������λ��
 	int first_view_id;
 	int occupied_voxels;						
 	double map_entropy;	
-	bool object_changed;
+	bool object_map_changed;
 	double octomap_resolution;
 	pcl::visualization::PCLVisualizer::Ptr viewer;
 	double height_of_ground;
@@ -749,7 +760,7 @@ public:
 	void get_view_space(vector<Eigen::Vector3d>& points) {
 		double now_time = clock();
 		object_center_world = Eigen::Vector3d(0, 0, 0);
-		//�����������
+		//获取点云中心
 		for (auto& ptr : points) {
 			object_center_world(0) += ptr(0);
 			object_center_world(1) += ptr(1);
@@ -758,51 +769,65 @@ public:
 		object_center_world(0) /= points.size();
 		object_center_world(1) /= points.size();
 		object_center_world(2) /= points.size();
-		//������Զ��
+
+		// //物体尺寸预测老版本，获取点云中心到最远点的距离
+		// predicted_size = 0.0;
+		// for (auto& ptr : points) {
+		// 	predicted_size = max(predicted_size, (object_center_world - ptr).norm());
+		// }
+		// predicted_size *= share_data->size_scale;
+		// //cout << "object's bbx solved within precentage "<< precent<< " with executed time " << clock() - now_time << " ms." << endl;
+		// cout << "object's pos is ("<< object_center_world(0) << "," << object_center_world(1) << "," << object_center_world(2) << ") and size is " << predicted_size << endl;
+
+		//物体尺寸预测新版本，获取点云中心到95%点的距离
 		predicted_size = 0.0;
+		double precent = 0.95; //考虑95%的点因为有些点是离群点和噪声点
+		vector<double> dis;
 		for (auto& ptr : points) {
-			predicted_size = max(predicted_size, (object_center_world - ptr).norm());
+			dis.push_back((object_center_world - ptr).norm());
 		}
-		predicted_size *= 17.0 / 16.0;
-		predicted_size *= share_data->size_scale;
-		//cout << "object's bbx solved within precentage "<< precent<< " with executed time " << clock() - now_time << " ms." << endl;
-		cout << "object's pos is ("<< object_center_world(0) << "," << object_center_world(1) << "," << object_center_world(2) << ") and size is " << predicted_size << endl;
-		/*int sample_num = 0;
-		int viewnum = 0;
-		//��һ���ӵ�̶�Ϊģ������
-		View view(Eigen::Vector3d(-0.065348 + object_center_world(0), 0.292504 + object_center_world(1), 0.0130882 + object_center_world(2)));
-		if (!vaild_view(view)) cout << "check init view." << endl;
-		views.push_back(view);
-		views_key_set->insert(octo_model->coordToKey(view.init_pos(0), view.init_pos(1), view.init_pos(2)));
-		viewnum++;
-		while (viewnum != num_of_views) {
-			//3��BBX��һ����������
-			double x = get_random_coordinate(object_center_world(0) - predicted_size * 4, object_center_world(0) + predicted_size * 4);
-			double y = get_random_coordinate(object_center_world(1), object_center_world(1) + predicted_size * 4);
-			double z = get_random_coordinate(object_center_world(2) - predicted_size * 4, object_center_world(2) + predicted_size * 4);
-			View view(Eigen::Vector3d(x, y, z));
-			view.id = viewnum;
-			//cout << x<<" " << y << " " << z << endl;
-			//�����������ӵ㱣��
-			if (vaild_view(view)) {
-				view.space_id = id;
-				view.dis_to_obejct = (object_center_world - view.init_pos).norm();
-				pair<int, double> local_path = get_local_path(Eigen::Vector3d(now_camera_pose_world(0, 3), now_camera_pose_world(1, 3), now_camera_pose_world(2, 3)).eval(), view.init_pos.eval(), object_center_world.eval(), predicted_size * sqrt(2)); //��Χ�а뾶�ǰ�߳��ĸ���2��
-				if (local_path.first < 0) cout << "local path wrong." << endl;
-				view.robot_cost = local_path.second;
-				views.push_back(view);
-				views_key_set->insert(octo_model->coordToKey(x,y,z));
-				viewnum++;
-			}
-			sample_num++;
-			if (sample_num >= 10 * num_of_views) {
-				cout << "lack of space to get view. error." << endl;
-				break;
-			}
-		}
-		cout << "view set is " << views_key_set->size() << endl;
-		cout<< views.size() << " views getted with sample_times " << sample_num << endl;
-		cout << "view_space getted form octomap with executed time " << clock() - now_time << " ms." << endl;*/
+		sort(dis.begin(), dis.end());
+		predicted_size = dis[(int)(dis.size() * precent)];
+		predicted_size *= share_data->size_scale; //预测尺寸放大,因为只考虑了95%的点，所以放大一点
+		cout << "object's pos is (" << object_center_world(0) << "," << object_center_world(1) << "," << object_center_world(2) << ") and size is " << predicted_size << endl;
+
+		// //随机采样视点
+		// int sample_num = 0;
+		// int viewnum = 0;
+		// //��һ���ӵ�̶�Ϊģ������
+		// View view(Eigen::Vector3d(-0.065348 + object_center_world(0), 0.292504 + object_center_world(1), 0.0130882 + object_center_world(2)));
+		// if (!vaild_view(view)) cout << "check init view." << endl;
+		// views.push_back(view);
+		// views_key_set->insert(octo_model->coordToKey(view.init_pos(0), view.init_pos(1), view.init_pos(2)));
+		// viewnum++;
+		// while (viewnum != num_of_views) {
+		// 	//3��BBX��һ����������
+		// 	double x = get_random_coordinate(object_center_world(0) - predicted_size * 4, object_center_world(0) + predicted_size * 4);
+		// 	double y = get_random_coordinate(object_center_world(1), object_center_world(1) + predicted_size * 4);
+		// 	double z = get_random_coordinate(object_center_world(2) - predicted_size * 4, object_center_world(2) + predicted_size * 4);
+		// 	View view(Eigen::Vector3d(x, y, z));
+		// 	view.id = viewnum;
+		// 	//cout << x<<" " << y << " " << z << endl;
+		// 	//�����������ӵ㱣��
+		// 	if (vaild_view(view)) {
+		// 		view.space_id = id;
+		// 		view.dis_to_obejct = (object_center_world - view.init_pos).norm();
+		// 		pair<int, double> local_path = get_local_path(Eigen::Vector3d(now_camera_pose_world(0, 3), now_camera_pose_world(1, 3), now_camera_pose_world(2, 3)).eval(), view.init_pos.eval(), object_center_world.eval(), predicted_size * sqrt(2)); //��Χ�а뾶�ǰ�߳��ĸ���2��
+		// 		if (local_path.first < 0) cout << "local path wrong." << endl;
+		// 		view.robot_cost = local_path.second;
+		// 		views.push_back(view);
+		// 		views_key_set->insert(octo_model->coordToKey(x,y,z));
+		// 		viewnum++;
+		// 	}
+		// 	sample_num++;
+		// 	if (sample_num >= 10 * num_of_views) {
+		// 		cout << "lack of space to get view. error." << endl;
+		// 		break;
+		// 	}
+		// }
+		// cout << "view set is " << views_key_set->size() << endl;
+		// cout<< views.size() << " views getted with sample_times " << sample_num << endl;
+		// cout << "view_space getted form octomap with executed time " << clock() - now_time << " ms." << endl;
 	}
 
 	~View_Space() {
@@ -811,7 +836,7 @@ public:
 
 	View_Space(int _id, Share_Data* _share_data, Voxel_Information* _voxel_information, pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud,int _first_view_id) {
 		share_data = _share_data;
-		object_changed = false;
+		object_map_changed = false;
 		first_view_id = _first_view_id;
 		id = _id;
 		num_of_views = share_data->num_of_views;
@@ -819,20 +844,31 @@ public:
 		voxel_information = _voxel_information;
 		viewer = share_data->viewer;
 		//views_key_set = new unordered_set<octomap::OcTreeKey, octomap::OcTreeKey::KeyHash>();
-		//���viewspace�Ƿ��Ѿ�����
-		if (share_data->gt_mode) {
-			ifstream fin("./view_space.txt");
+		//gt或者在线模式
+		if (share_data->gt_mode || share_data->object_center_mode == 0) {
+			ifstream fin("/home/user/pan/ma-scvp-real/src/NBV_Simulation_MA-SCVP/view_space.txt");
 			if (fin.is_open()) { //�����ļ��Ͷ��ӵ㼯��
 				int num;
 				fin >> num;
 				share_data->num_of_views = num;
 				num_of_views = num;
+				//对点云进行滤波，除去重复点，否则质心会有偏移
+				pcl::VoxelGrid<pcl::PointXYZRGB> sor;
+				sor.setLeafSize(share_data->ground_truth_resolution, share_data->ground_truth_resolution, share_data->ground_truth_resolution);
+				sor.setInputCloud(cloud);
+				pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_filtered(new pcl::PointCloud<pcl::PointXYZRGB>);
+				sor.filter(*cloud_filtered);
+				//计算点云的质心
 				vector<Eigen::Vector3d> points;
-				for (auto& ptr : cloud->points) {
+				for (auto& ptr : cloud_filtered->points) {
 					Eigen::Vector3d pt(ptr.x, ptr.y, ptr.z);
+					//计算尺寸的时候需要保守一点，高度上多加1cm，因为点云的高度可能会有一点点误差
+					if (pt(2) < share_data->height_of_ground + 0.01) continue;
 					points.push_back(pt);
 				}
 				get_view_space(points);
+				//中心点可以往下移动一点，因为点云的高度可能会有一点点误差
+				object_center_world(2) -= 0.01;
 				views.clear();
 				//views_key_set->clear();
 				for (int i = 0; i < num_of_views; i++) {
@@ -849,7 +885,7 @@ public:
 					//views_key_set->insert(octo_model->coordToKey(init_pos[0], init_pos[1], init_pos[2]));
 				}
 				for (int i = 0; i < num_of_views; i++) {
-					pair<int, double> local_path = get_local_path(views[first_view_id].init_pos.eval(), views[i].init_pos.eval(), object_center_world.eval(), predicted_size * sqrt(2)); //��Χ�а뾶�ǰ�߳��ĸ���2��
+					pair<int, double> local_path = get_local_path(views[first_view_id].init_pos.eval(), views[i].init_pos.eval(), object_center_world.eval(), predicted_size + share_data->safe_distance); //��Χ�а뾶�ǰ�߳��ĸ���2��
 					if (local_path.first < 0) cout << "local path wrong." << endl;
 					views[i].robot_cost = local_path.second;
 				}
@@ -859,7 +895,7 @@ public:
 				cout << "no view space. check!" << endl;
 			}
 		}
-		else { //search_method
+		else { //online mode with gt
 			ifstream fin(share_data->pcd_file_path + share_data->name_of_pcd + "_vs.txt");
 			if (fin.is_open()) { //�����ļ��Ͷ��ӵ㼯��
 				int num;
@@ -884,7 +920,7 @@ public:
 				}
 				cout << "object's pos is ("<< object_center_world(0) << "," << object_center_world(1) << "," << object_center_world(2) << ") and size is " << predicted_size << endl;
 				for (int i = 0; i < num_of_views; i++) {
-					pair<int, double> local_path = get_local_path(views[first_view_id].init_pos.eval(), views[i].init_pos.eval(), object_center_world.eval(), predicted_size * sqrt(2)); //��Χ�а뾶�ǰ�߳��ĸ���2��
+					pair<int, double> local_path = get_local_path(views[first_view_id].init_pos.eval(), views[i].init_pos.eval(), object_center_world.eval(), predicted_size + share_data->safe_distance); //��Χ�а뾶�ǰ�߳��ĸ���2��
 					if (local_path.first < 0) cout << "local path wrong." << endl;
 					views[i].robot_cost = local_path.second;
 				}
@@ -894,14 +930,18 @@ public:
 				cout << "no viewspace readed. Check!" << endl;
 			}
 		}
-		//����һ������������
+		//GT模式，直接用GT的物体中心和尺寸
 		share_data->object_center_world = object_center_world;
 		share_data->predicted_size = predicted_size;
-		double map_size = predicted_size + 2.0 * octomap_resolution;
-		share_data->map_size = map_size;
 
-		//��̬�ֱ���
-		double predicted_octomap_resolution = predicted_size * 2.0 / 32.0;
+		//地图尺寸大一些，用于适应物体中心和动态尺寸
+		map_size = share_data->map_scale * predicted_size;
+		map_center = object_center_world;
+		share_data->map_size = map_size;
+		share_data->map_center = map_center;
+
+		//动态分辨率
+		double predicted_octomap_resolution = map_size * 2.0 / 32.0; //使用地图尺寸来预测分辨率
 		cout << "choose octomap_resolution: " << predicted_octomap_resolution << " m." << endl;
 		share_data->octomap_resolution = predicted_octomap_resolution;
 		share_data->octo_model = new octomap::ColorOcTree(share_data->octomap_resolution);
@@ -911,64 +951,225 @@ public:
 		octo_model = share_data->octo_model;
 		octomap_resolution = share_data->octomap_resolution;
 
-		//��һ�ε����ݣ�����BBX��ʼ����ͼ
+		//初始化地图
 		double now_time = clock();
-		for (int i = 0; i < 32; i++)
-			for (int j = 0; j < 32; j++)
-				for (int k = 0; k < 32; k++)
-				{
-					double x = share_data->object_center_world(0) - share_data->predicted_size + share_data->octomap_resolution * i;
-					double y = share_data->object_center_world(1) - share_data->predicted_size + share_data->octomap_resolution * j;
-					double z = max(share_data->min_z_table, share_data->object_center_world(2) - share_data->predicted_size) + share_data->octomap_resolution * k;
-					octo_model->setNodeValue(x, y, z, (float)0, true); //��ʼ������0.5����logoddsΪ0
-				}		
+		for (double x = share_data->map_center(0) - share_data->map_size; x <= share_data->map_center(0) + share_data->map_size; x += share_data->octomap_resolution)
+			for (double y = share_data->map_center(1) - share_data->map_size; y <= share_data->map_center(1) + share_data->map_size; y += share_data->octomap_resolution)
+				for (double z = share_data->map_center(2) - share_data->map_size; z <= share_data->map_center(2) + share_data->map_size; z += share_data->octomap_resolution)
+					octo_model->setNodeValue(x, y, z, (float)0, true); //occ0.5 = logodds0	
 		octo_model->updateInnerOccupancy();
 		share_data->init_entropy = 0;
 		share_data->voxels_in_BBX = 0;
-		for (octomap::ColorOcTree::leaf_iterator it = octo_model->begin_leafs(), end = octo_model->end_leafs(); it != end; ++it)
-		{
-			//cout << it.getX() - object_center_world(0) << " " << it.getY() - object_center_world(1) << " " << it.getZ() - object_center_world(2)  << endl;
-			double occupancy = (*it).getOccupancy();
-			share_data->init_entropy += voxel_information->entropy(occupancy);
-			share_data->voxels_in_BBX++;
-		}
+		for (double x = share_data->map_center(0) - share_data->map_size; x <= share_data->map_center(0) + share_data->map_size; x += share_data->octomap_resolution)
+			for (double y = share_data->map_center(1) - share_data->map_size; y <= share_data->map_center(1) + share_data->map_size; y += share_data->octomap_resolution)
+				for (double z = share_data->map_center(2) - share_data->map_size; z <= share_data->map_center(2) + share_data->map_size; z += share_data->octomap_resolution)
+				{
+					double occupancy = octo_model->search(x, y, z)->getOccupancy();
+					share_data->init_entropy += voxel_information->entropy(occupancy);
+					share_data->voxels_in_BBX++;
+				}
 		voxel_information->init_mutex_voxels(share_data->voxels_in_BBX);
 		cout << "Map_init has voxels(in BBX) " << share_data->voxels_in_BBX << " and entropy " << share_data->init_entropy << endl;
-		//share_data->access_directory(share_data->save_path+ "/quantitative");
-		//ofstream fout_map(share_data->save_path+"/quantitative/Map" + to_string(-1) + ".txt");
-		//fout_map << 0 << '\t' << share_data->init_entropy << '\t' << 0 << '\t' << 1 << endl;
-
-		//�ڵ����ϸ���GT���㸲����,����Octomap����ͳ�ƿɼ������
-		//int num = 0;
-		//unordered_map<octomap::OcTreeKey, int, octomap::OcTreeKey::KeyHash>* voxel = new unordered_map<octomap::OcTreeKey, int, octomap::OcTreeKey::KeyHash>();
-		//for (int j = 0; j < share_data->cloud_final->points.size(); j++) {
-		//	octomap::OcTreeKey key = share_data->ground_truth_model->coordToKey(share_data->cloud_final->points[j].x, share_data->cloud_final->points[j].y, share_data->cloud_final->points[j].z);
-		//	if (voxel->find(key) == voxel->end()) {
-		//		(*voxel)[key] = num++;
-		//	}
-		//}
-		//cout << "Cloud_init has voxels " << voxel->size() << endl;
-		//ofstream fout_cloud(share_data->save_path + "/quantitative/Cloud" + to_string(-1) + ".txt");
-		//fout_cloud << voxel->size() << '\t' << 1.0 * voxel->size() / share_data->GT_points_number << '\t' << 1.0 * voxel->size() / share_data->cloud_points_number<< endl;
-		//delete voxel;
 	}
 
 	void update(int _id, Share_Data* _share_data, pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud,pcl::PointCloud<pcl::PointXYZRGB>::Ptr update_cloud) {
 		share_data = _share_data;
-		object_changed = false;
+		object_map_changed = false;
 		id = _id;
 		now_camera_pose_world = share_data->now_camera_pose_world;
-		//�����ӵ���
+
+		//第一次更新，没有变化
+		if(id != 0){
+			//如果是gt模式或者在线模式，更新物体中心和尺寸
+			if (share_data->gt_mode || share_data->object_center_mode == 0) {
+				ifstream fin("/home/user/pan/ma-scvp-real/src/NBV_Simulation_MA-SCVP/view_space.txt");
+				if (fin.is_open()) { //�����ļ��Ͷ��ӵ㼯��
+					//保存中间view
+					vector<View> temp_views;
+					//注意视点需要按照id排序来建立映射
+					sort(views.begin(), views.end(), view_id_compare);
+					for (auto& view : views) {
+						temp_views.push_back(view);
+					}
+					//重新打开viewspace
+					int num;
+					fin >> num;
+					share_data->num_of_views = num;
+					num_of_views = num;
+					//对点云进行滤波，除去重复点，否则质心会有偏移
+					pcl::VoxelGrid<pcl::PointXYZRGB> sor;
+					sor.setLeafSize(share_data->ground_truth_resolution, share_data->ground_truth_resolution, share_data->ground_truth_resolution);
+					sor.setInputCloud(cloud);
+					pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_filtered(new pcl::PointCloud<pcl::PointXYZRGB>);
+					sor.filter(*cloud_filtered);
+					//计算点云的质心
+					vector<Eigen::Vector3d> points;
+					for (auto& ptr : cloud_filtered->points) {
+						Eigen::Vector3d pt(ptr.x, ptr.y, ptr.z);
+						//计算尺寸的时候需要保守一点，高度上多加1cm，因为点云的高度可能会有一点点误差
+						if (pt(2) < share_data->height_of_ground + 0.01) continue;
+						points.push_back(pt);
+					}
+					get_view_space(points);
+					//中心点可以往下移动一点，因为点云的高度可能会有一点点误差
+					object_center_world(2) -= 0.01;
+					views.clear();
+					for (int i = 0; i < num_of_views; i++) {
+						double init_pos[3];
+						fin >> init_pos[0] >> init_pos[1] >> init_pos[2];
+						init_pos[0] = init_pos[0] / 0.4 * (share_data->camera_to_object_dis + predicted_size);
+						init_pos[1] = init_pos[1] / 0.4 * (share_data->camera_to_object_dis + predicted_size);
+						init_pos[2] = init_pos[2] / 0.4 * (share_data->camera_to_object_dis + predicted_size);
+						View view(Eigen::Vector3d(init_pos[0] + object_center_world(0), init_pos[1] + object_center_world(1), init_pos[2] + object_center_world(2) + share_data->up_shift));
+						view.id = i;
+						view.space_id = id;
+						view.dis_to_obejct = (object_center_world - view.init_pos).norm();
+						view.vis = temp_views[i].vis;
+						views.push_back(view);
+					}
+					cout << "viewspace readed again." << endl;
+				}
+				else {
+					cout << "no view space. check!" << endl;
+				}
+			}
+			//更新物体尺寸和中心
+			share_data->object_center_world = object_center_world;
+			share_data->predicted_size = predicted_size;
+			//更新完毕后，如果物体中心或者尺寸发生较大变化，超出地图描述范围，需要重新初始化地图
+			bool large_change = false;
+			//检查新的物体BBX是否在map范围内
+			if(object_center_world(0) - predicted_size < share_data->map_center(0) - share_data->map_size) large_change = true;
+			if(object_center_world(0) + predicted_size > share_data->map_center(0) + share_data->map_size) large_change = true;
+			if(object_center_world(1) - predicted_size < share_data->map_center(1) - share_data->map_size) large_change = true;
+			if(object_center_world(1) + predicted_size > share_data->map_center(1) + share_data->map_size) large_change = true;
+			if(object_center_world(2) - predicted_size < share_data->map_center(2) - share_data->map_size) large_change = true;
+			if(object_center_world(2) + predicted_size > share_data->map_center(2) + share_data->map_size) large_change = true;
+
+			// 我们的方法中，如果不需要使用地图了，那么就不需要重新初始化地图
+			if (share_data->method_of_IG == 7 && id > 0 + share_data->num_of_nbvs_combined) large_change = false;
+
+			//如果发生较大变化，需要重新初始化地图
+			if(!large_change){
+				cout << "not large change. keep map. update center and size." << endl;
+			}
+			else
+			{
+				cout<< "large change. reinit map. take some time ..." << endl;
+				cout<< "To aviod reinit, you can use a larger map by change map_scale! Note this will affect the resolution a bit." << endl;
+
+				//地图尺寸大一些，用于适应物体中心和动态尺寸
+				map_size = share_data->map_scale * predicted_size;
+				map_center = object_center_world;
+				share_data->map_size = map_size;
+				share_data->map_center = map_center;
+
+				//动态分辨率
+				double predicted_octomap_resolution = map_size * 2.0 / 32.0; //使用地图尺寸来预测分辨率
+				cout << "rechoose octomap_resolution: " << predicted_octomap_resolution << " m." << endl;
+				share_data->octomap_resolution = predicted_octomap_resolution;
+				delete share_data->octo_model;
+				share_data->octo_model = new octomap::ColorOcTree(share_data->octomap_resolution);
+				share_data->octo_model->setOccupancyThres(0.65);
+
+				octo_model = share_data->octo_model;
+				octomap_resolution = share_data->octomap_resolution;
+
+				//初始化地图
+				double now_time = clock();
+				for (double x = share_data->map_center(0) - share_data->map_size; x <= share_data->map_center(0) + share_data->map_size; x += share_data->octomap_resolution)
+					for (double y = share_data->map_center(1) - share_data->map_size; y <= share_data->map_center(1) + share_data->map_size; y += share_data->octomap_resolution)
+						for (double z = share_data->map_center(2) - share_data->map_size; z <= share_data->map_center(2) + share_data->map_size; z += share_data->octomap_resolution)
+							octo_model->setNodeValue(x, y, z, (float)0, true); //occ0.5 = logodds0	
+				octo_model->updateInnerOccupancy();
+				share_data->init_entropy = 0;
+				share_data->voxels_in_BBX = 0;
+				for (double x = share_data->map_center(0) - share_data->map_size; x <= share_data->map_center(0) + share_data->map_size; x += share_data->octomap_resolution)
+					for (double y = share_data->map_center(1) - share_data->map_size; y <= share_data->map_center(1) + share_data->map_size; y += share_data->octomap_resolution)
+						for (double z = share_data->map_center(2) - share_data->map_size; z <= share_data->map_center(2) + share_data->map_size; z += share_data->octomap_resolution)
+						{
+							double occupancy = octo_model->search(x, y, z)->getOccupancy();
+							share_data->init_entropy += voxel_information->entropy(occupancy);
+							share_data->voxels_in_BBX++;
+						}
+				voxel_information->clear_mutex_voxels();
+				voxel_information->init_mutex_voxels(share_data->voxels_in_BBX);
+				cout << "Map_reinit has voxels(in BBX) " << share_data->voxels_in_BBX << " and entropy " << share_data->init_entropy << endl;
+
+				//插入之前的点云，并更新f_voxels
+				share_data->f_voxels.clear();
+				for (int nbv_idx = 0; nbv_idx < id; nbv_idx++){
+					octomap::Pointcloud cloud_octo;
+					for (auto p : share_data->clouds[nbv_idx]->points) {
+						cloud_octo.push_back(p.x, p.y, p.z);
+					}
+					octo_model->insertPointCloud(cloud_octo, octomap::point3d(share_data->nbvs_pose_world[nbv_idx](0, 3), share_data->nbvs_pose_world[nbv_idx](1, 3), share_data->nbvs_pose_world[nbv_idx](2, 3)), -1, true, false);
+					for (auto p : share_data->clouds[nbv_idx]->points) {
+						octo_model->integrateNodeColor(p.x, p.y, p.z, p.r, p.g, p.b);
+					}
+					octo_model->updateInnerOccupancy();
+					cout << "reinsert cloud into new octomap with NBV " << nbv_idx << endl;
+					//if the method is not (combined) one-shot and random, then use f_voxel to decide whether to stop
+					if(!(share_data->Combined_on == true || share_data->method_of_IG == 7 || share_data->method_of_IG == 8)){
+						//compute f_voxels
+						int f_voxels_num = 0;
+						for (octomap::ColorOcTree::leaf_iterator it = octo_model->begin_leafs(), end = octo_model->end_leafs(); it != end; ++it) {
+							double occupancy = (*it).getOccupancy();
+							if (fabs(occupancy - 0.5) < 1e-3) { // unknown
+								auto coordinate = it.getCoordinate();
+								if (coordinate.x() >= share_data->map_center(0) - share_data->map_size && coordinate.x() <= share_data->map_center(0) + share_data->map_size
+									&& coordinate.y() >= share_data->map_center(1) - share_data->map_size && coordinate.y() <= share_data->map_center(1) + share_data->map_size
+									&& coordinate.z() >= share_data->map_center(2) - share_data->map_size && coordinate.z() <= share_data->map_center(2) + share_data->map_size)
+								{
+									// compute the frontier voxels that is unknown and has at least one free and one occupied neighbor
+									int free_cnt = 0;
+									int occupied_cnt = 0;
+									for (int i = -1; i <= 1; i++)
+										for (int j = -1; j <= 1; j++)
+											for (int k = -1; k <= 1; k++)
+											{
+												if (i == 0 && j == 0 && k == 0) continue;
+												double x = coordinate.x() + i * share_data->octomap_resolution;
+												double y = coordinate.y() + j * share_data->octomap_resolution;
+												double z = coordinate.z() + k * share_data->octomap_resolution;
+												octomap::point3d neighbour(x, y, z);
+												octomap::OcTreeKey neighbour_key;  bool neighbour_key_have = share_data->octo_model->coordToKeyChecked(neighbour, neighbour_key);
+												if (neighbour_key_have) {
+													octomap::ColorOcTreeNode* neighbour_voxel = share_data->octo_model->search(neighbour_key);
+													if (neighbour_voxel != NULL) {
+														double neighbour_occupancy = neighbour_voxel->getOccupancy();
+														free_cnt += neighbour_occupancy < 0.5 ? 1 : 0;
+														occupied_cnt += neighbour_occupancy > 0.5 ? 1 : 0;
+													}
+												}
+											}
+									//edge
+									if (free_cnt >= 1 && occupied_cnt >= 1) {
+										f_voxels_num++;
+										//cout << "f voxel: " << coordinate.x() << " " << coordinate.y() << " " << coordinate.z() << endl;
+									}
+								}
+							}
+						}
+						share_data->f_voxels.push_back(f_voxels_num);
+						cout << "update map " << nbv_idx << " with f_voxels " << f_voxels_num << endl;
+					}
+				}
+
+				//注意一定要更新标志
+				object_map_changed = true;
+			}
+		}
+
+		//更新试点路径
 		for (int i = 0; i < views.size(); i++) {
 			views[i].space_id = id;
-			pair<int, double> local_path = get_local_path(Eigen::Vector3d(now_camera_pose_world(0, 3), now_camera_pose_world(1, 3), now_camera_pose_world(2, 3)).eval(), views[i].init_pos.eval(), object_center_world.eval(), predicted_size * sqrt(2)); //��Χ�а뾶�ǰ�߳��ĸ���2��
+			pair<int, double> local_path = get_local_path(Eigen::Vector3d(now_camera_pose_world(0, 3), now_camera_pose_world(1, 3), now_camera_pose_world(2, 3)).eval(), views[i].init_pos.eval(), object_center_world.eval(), predicted_size + share_data->safe_distance); //��Χ�а뾶�ǰ�߳��ĸ���2��
 			if (local_path.first < 0) cout << "local path wrong." << endl;
 			views[i].robot_cost = local_path.second;
 		}
-		//����������м����ݽṹ
+		//插入当前点云
 		double now_time = clock();
-		double map_size = predicted_size + 3.0 * octomap_resolution;
-		share_data->map_size = map_size;
 		octomap::Pointcloud cloud_octo;
 		for (auto p : update_cloud->points) {
 			cloud_octo.push_back(p.x, p.y, p.z);
@@ -982,43 +1183,26 @@ public:
 		map_entropy = 0;
 		occupied_voxels = 0;
 
-		//�ڵ�ͼ�ϣ�ͳ����Ϣ��
-		for (int i = 0; i < 32; i++)
-			for (int j = 0; j < 32; j++)
-				for (int k = 0; k < 32; k++)
+		//统计地图信息
+		for (double x = share_data->map_center(0) - share_data->map_size; x <= share_data->map_center(0) + share_data->map_size; x += share_data->octomap_resolution)
+			for (double y = share_data->map_center(1) - share_data->map_size; y <= share_data->map_center(1) + share_data->map_size; y += share_data->octomap_resolution)
+				for (double z = share_data->map_center(2) - share_data->map_size; z <= share_data->map_center(2) + share_data->map_size; z += share_data->octomap_resolution)
 				{
-					double x = share_data->object_center_world(0) - share_data->predicted_size + share_data->octomap_resolution * i;
-					double y = share_data->object_center_world(1) - share_data->predicted_size + share_data->octomap_resolution * j;
-					double z = max(share_data->min_z_table, share_data->object_center_world(2) - share_data->predicted_size) + share_data->octomap_resolution * k;
 					auto node = octo_model->search(x, y, z);
-					if (node == NULL) cout << "what?" << endl;
+					if (node == NULL) cout << "map out of range!" << endl;
 					double occupancy = node->getOccupancy();
 					map_entropy += voxel_information->entropy(occupancy);
-					if (occupancy > 0.5 && z > share_data->min_z_table + share_data->octomap_resolution) occupied_voxels++;
+					if (occupancy > 0.5 && z > share_data->height_of_ground) occupied_voxels++;
 				}
-		share_data->access_directory(share_data->save_path + "/octomaps");
-		if(share_data->is_save)	share_data->octo_model->write(share_data->save_path + "/octomaps/octomap"+to_string(id)+".ot");
+		if(share_data->is_save)	{
+			share_data->access_directory(share_data->save_path + "/octomaps");
+			share_data->octo_model->write(share_data->save_path + "/octomaps/octomap"+to_string(id)+".ot");
+		}
 		
 		if (id == 0) {
 			share_data->access_directory(share_data->save_path + "/quantitative");
 			ofstream fout_map(share_data->save_path+"/quantitative/Map" + to_string(-1) + ".txt");
 			fout_map << 0 << '\t' << share_data->init_entropy << '\t' << 0 << '\t' << 1 << endl;
-		}
-
-		if (share_data->is_save) {
-			//�ڵ����ϣ�ͳ���ؽ����ظ���
-			for (octomap::ColorOcTree::leaf_iterator it = share_data->ground_truth_model->begin_leafs(), end = share_data->ground_truth_model->end_leafs(); it != end; ++it) {
-				share_data->cloud_model->setNodeValue(it.getKey(), octomap::logodds(1.0), true);
-				share_data->cloud_model->setNodeColor(it.getKey(), 192, 192, 192);
-			}
-			for (int j = 0; j < share_data->cloud_final->points.size(); j++) {
-				octomap::OcTreeKey key = share_data->cloud_model->coordToKey(share_data->cloud_final->points[j].x, share_data->cloud_final->points[j].y, share_data->cloud_final->points[j].z);
-				share_data->cloud_model->setNodeColor(key, 255, 64, 64);
-			}
-			share_data->cloud_model->updateInnerOccupancy();
-
-			share_data->access_directory(share_data->save_path + "/octocloud");
-			share_data->cloud_model->write(share_data->save_path + "/octocloud/octocloud" + to_string(id) + ".ot");
 		}
 
 		cout << "Map " << id << " has voxels " << occupied_voxels << ". Map " << id << " has entropy " << map_entropy << endl;
@@ -1027,44 +1211,113 @@ public:
 		ofstream fout_map(share_data->save_path +"/quantitative/Map" + to_string(id) + ".txt");
 		fout_map << occupied_voxels << '\t' << map_entropy << '\t' << 1.0 * occupied_voxels / share_data->init_voxels << '\t' << map_entropy / share_data->init_entropy << endl;
 
-		
-		//nebourhoods search
-		int num = 0;
-		unordered_map<octomap::OcTreeKey, int, octomap::OcTreeKey::KeyHash>* voxel = new unordered_map<octomap::OcTreeKey, int, octomap::OcTreeKey::KeyHash>();
-		for (int j = 0; j < share_data->cloud_final->points.size(); j++) {
-			octomap::OcTreeKey key = share_data->ground_truth_model->coordToKey(share_data->cloud_final->points[j].x, share_data->cloud_final->points[j].y, share_data->cloud_final->points[j].z);
-			bool in_gt = false; 
-			//search nabourhoods
-			for (double x = -share_data->ground_truth_resolution; x <= share_data->ground_truth_resolution; x+=share_data->ground_truth_resolution)
-				for (double y = -share_data->ground_truth_resolution; y <= share_data->ground_truth_resolution; y+=share_data->ground_truth_resolution)
-					for (double z = -share_data->ground_truth_resolution; z <= share_data->ground_truth_resolution; z+=share_data->ground_truth_resolution)
-					{
-						octomap::OcTreeKey key_nabourhood = share_data->ground_truth_model->coordToKey(share_data->cloud_final->points[j].x + x, share_data->cloud_final->points[j].y + y, share_data->cloud_final->points[j].z + z);
-						if (share_data->ground_truth_model->search(key_nabourhood) != NULL) {
-							in_gt = true;
-							break;
-						}
-					}
-			if (in_gt && voxel->find(key) == voxel->end()) {
-				(*voxel)[key] = num++;
-			}
-		}
-		
-		//number search
-		int num_half = 0;
-		unordered_map<octomap::OcTreeKey, int, octomap::OcTreeKey::KeyHash>* voxel_half = new unordered_map<octomap::OcTreeKey, int, octomap::OcTreeKey::KeyHash>();
-		for (int j = 0; j < share_data->cloud_final->points.size(); j++) {
-			octomap::OcTreeKey key = share_data->GT_sample->coordToKey(share_data->cloud_final->points[j].x, share_data->cloud_final->points[j].y, share_data->cloud_final->points[j].z);
-			if (voxel_half->find(key) == voxel_half->end()) {
-				(*voxel_half)[key] = num_half++;
+		// //每次更新voxel_final，效果不佳
+		// for (auto p : update_cloud->points) {
+		// 	octomap::OcTreeKey key = share_data->ground_truth_model->coordToKey(p.x, p.y, p.z);
+		// 	if(share_data->voxel_final->find(key) == share_data->voxel_final->end()) {
+		// 		(*share_data->voxel_final)[key] = 1;
+		// 	}
+		// }
+
+		//做一次ICP
+		share_data->cloud_final_downsampled = pcl::PointCloud<pcl::PointXYZRGB>::Ptr(new pcl::PointCloud<pcl::PointXYZRGB>);
+		pcl::VoxelGrid<pcl::PointXYZRGB> sor;
+		sor.setLeafSize(0.005f, 0.005f, 0.005f);
+		sor.setInputCloud(share_data->cloud_final);
+		sor.filter(*share_data->cloud_final_downsampled);
+		pcl::IterativeClosestPoint<pcl::PointXYZRGB, pcl::PointXYZRGB> icp_rgb;
+		icp_rgb.setTransformationEpsilon(1e-10);
+		icp_rgb.setEuclideanFitnessEpsilon(1e-6);
+		icp_rgb.setMaximumIterations(100000);
+		icp_rgb.setMaxCorrespondenceDistance(share_data->icp_distance);
+		// do icp
+		icp_rgb.setInputSource(share_data->cloud_final_downsampled);
+		icp_rgb.setInputTarget(share_data->cloud_ground_truth_downsampled);
+		pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_icp(new pcl::PointCloud<pcl::PointXYZRGB>);
+		icp_rgb.align(*cloud_icp);
+		Eigen::Matrix4d T_icp(4, 4);
+		T_icp = icp_rgb.getFinalTransformation().cast<double>();
+		cout << "ICP matraix: " << T_icp << endl;
+		//把cloud_final按T_icp变换，存到到cloud_icp
+		pcl::transformPointCloud(*share_data->cloud_final, *cloud_icp, T_icp);
+		share_data->voxel_final->clear();
+		for (auto p : cloud_icp->points) {
+			octomap::OcTreeKey key = share_data->ground_truth_model->coordToKey(p.x, p.y, p.z);
+			if(share_data->voxel_final->find(key) == share_data->voxel_final->end()) {
+				(*share_data->voxel_final)[key] = 1;
 			}
 		}
 
-		cout << "Cloud " << id << " has voxels " <<num_half <<" "<< num << endl;
-		cout << "Cloud " << id << " has half coverage " << 1.0 * num_half / share_data->init_voxels << " voxels(rate/GT) " << 1.0 * num / share_data->cloud_points_number << endl; 
+		//统计覆盖率
+		int num = 0;
+		unordered_map<octomap::OcTreeKey, int, octomap::OcTreeKey::KeyHash>* voxel_overlap = new unordered_map<octomap::OcTreeKey, int, octomap::OcTreeKey::KeyHash>();
+		for (auto it = share_data->voxel_gt->begin(); it != share_data->voxel_gt->end(); it++) {
+			octomap::OcTreeKey key = it->first;
+			octomap::point3d point = share_data->ground_truth_model->keyToCoord(key);
+			bool gt_in_recontruct = false;
+			//search nabourhoods
+			for (double x = -share_data->ground_truth_resolution * share_data->vsc_nabourhood_num; x <= share_data->ground_truth_resolution * share_data->vsc_nabourhood_num; x += share_data->ground_truth_resolution)
+				for (double y = -share_data->ground_truth_resolution * share_data->vsc_nabourhood_num; y <= share_data->ground_truth_resolution * share_data->vsc_nabourhood_num; y += share_data->ground_truth_resolution)
+					for (double z = -share_data->ground_truth_resolution * share_data->vsc_nabourhood_num; z <= share_data->ground_truth_resolution * share_data->vsc_nabourhood_num; z += share_data->ground_truth_resolution)
+					{
+						octomap::OcTreeKey key_nabourhood = share_data->ground_truth_model->coordToKey(point.x() + x, point.y() + y, point.z() + z);
+						if (share_data->voxel_final->find(key_nabourhood) != share_data->voxel_final->end()) {
+							gt_in_recontruct = true;
+							break;
+						}
+					}
+			if (gt_in_recontruct && voxel_overlap->find(key) == voxel_overlap->end()) {
+				(*voxel_overlap)[key] = num++;
+			}
+		}
+
+		if(share_data->is_save){
+			//保存中心信息，用于后续分析: object_center_world, predicted_size, map_center, map_size, resolution, voxel in bbx
+			share_data->access_directory(share_data->save_path + "/centers");
+			ofstream fout_center(share_data->save_path + "/centers/" + to_string(id) + ".txt");
+			fout_center << object_center_world(0) << '\t' << object_center_world(1) << '\t' << object_center_world(2) << '\t' << predicted_size << endl;
+			fout_center << map_center(0) << '\t' << map_center(1) << '\t' << map_center(2) << '\t' << map_size << endl;
+			fout_center << share_data->octomap_resolution << '\t' << share_data->voxels_in_BBX << endl;
+			//保存voxel_overlap的octomap
+			share_data->access_directory(share_data->save_path + "/covered_voxels");
+			octomap::ColorOcTree* covered_voxels_model = new octomap::ColorOcTree(share_data->ground_truth_resolution);
+			covered_voxels_model->setOccupancyThres(0.65);
+			for (auto it = share_data->voxel_gt->begin(); it != share_data->voxel_gt->end(); it++) {
+				octomap::OcTreeKey key = it->first;
+				//设置为已占用体素
+				covered_voxels_model->setNodeValue(key, octomap::logodds(1.0), true);
+				covered_voxels_model->setNodeColor(key, 128, 128, 128);
+			}
+			covered_voxels_model->updateInnerOccupancy();
+			for (auto it = voxel_overlap->begin(); it != voxel_overlap->end(); it++) {
+				octomap::OcTreeKey key = it->first;
+				covered_voxels_model->setNodeColor(key, 255, 0, 0);
+			}
+			covered_voxels_model->updateInnerOccupancy();
+			covered_voxels_model->write(share_data->save_path + "/covered_voxels/" + to_string(id) + ".ot");
+			delete covered_voxels_model;
+		}
+
+		cout << "Cloud " << id << " has voxels " << num << endl;
+		cout << "Cloud " << id << " has voxels(rate/GT) " << 1.0 * num / share_data->cloud_points_number << endl; 
 		ofstream fout_cloud(share_data->save_path + "/quantitative/Cloud" + to_string(id) + ".txt");
-		fout_cloud << num_half <<'\t'<< num << '\t'  << 1.0 * num_half / share_data->init_voxels << '\t' << 1.0 * num  / share_data->cloud_points_number << endl;
-		delete voxel;
+		fout_cloud <<'\t'<< num << '\t' << 1.0 * num  / share_data->cloud_points_number << endl;
+		delete voxel_overlap;
+	}
+
+	void remove_bbx(pcl::visualization::PCLVisualizer::Ptr viewer) {
+		viewer->removeShape("cube1");
+		viewer->removeShape("cube2");
+		viewer->removeShape("cube3");
+		viewer->removeShape("cube4");
+		viewer->removeShape("cube5");
+		viewer->removeShape("cube6");
+		viewer->removeShape("cube7");
+		viewer->removeShape("cube8");
+		viewer->removeShape("cube9");
+		viewer->removeShape("cube10");
+		viewer->removeShape("cube11");
+		viewer->removeShape("cube12");
 	}
 
 	void add_bbx_to_cloud(pcl::visualization::PCLVisualizer::Ptr viewer) {
@@ -1072,7 +1325,7 @@ public:
 		double x2 = object_center_world(0) + predicted_size;
 		double y1 = object_center_world(1) - predicted_size;
 		double y2 = object_center_world(1) + predicted_size;
-		double z1 = max(share_data->min_z_table, object_center_world(2) - predicted_size);
+		double z1 = object_center_world(2) - predicted_size;
 		double z2 = object_center_world(2) + predicted_size;
 		viewer->addLine<pcl::PointXYZ>(pcl::PointXYZ(x1, y1, z1), pcl::PointXYZ(x1, y2, z1), 0, 255, 0, "cube1");
 		viewer->addLine<pcl::PointXYZ>(pcl::PointXYZ(x1, y1, z1), pcl::PointXYZ(x2, y1, z1), 0, 255, 0, "cube2");
@@ -1086,6 +1339,18 @@ public:
 		viewer->addLine<pcl::PointXYZ>(pcl::PointXYZ(x1, y2, z2), pcl::PointXYZ(x1, y2, z1), 0, 255, 0, "cube11");
 		viewer->addLine<pcl::PointXYZ>(pcl::PointXYZ(x2, y2, z1), pcl::PointXYZ(x1, y2, z1), 0, 255, 0, "cube12");
 		viewer->addLine<pcl::PointXYZ>(pcl::PointXYZ(x2, y2, z1), pcl::PointXYZ(x2, y1, z1), 0, 255, 0, "cube7");
+		viewer->setShapeRenderingProperties(pcl::visualization::PCL_VISUALIZER_LINE_WIDTH, 3, "cube1");
+		viewer->setShapeRenderingProperties(pcl::visualization::PCL_VISUALIZER_LINE_WIDTH, 3, "cube2");
+		viewer->setShapeRenderingProperties(pcl::visualization::PCL_VISUALIZER_LINE_WIDTH, 3, "cube3");
+		viewer->setShapeRenderingProperties(pcl::visualization::PCL_VISUALIZER_LINE_WIDTH, 3, "cube4");
+		viewer->setShapeRenderingProperties(pcl::visualization::PCL_VISUALIZER_LINE_WIDTH, 3, "cube5");
+		viewer->setShapeRenderingProperties(pcl::visualization::PCL_VISUALIZER_LINE_WIDTH, 3, "cube6");
+		viewer->setShapeRenderingProperties(pcl::visualization::PCL_VISUALIZER_LINE_WIDTH, 3, "cube7");
+		viewer->setShapeRenderingProperties(pcl::visualization::PCL_VISUALIZER_LINE_WIDTH, 3, "cube8");
+		viewer->setShapeRenderingProperties(pcl::visualization::PCL_VISUALIZER_LINE_WIDTH, 3, "cube9");
+		viewer->setShapeRenderingProperties(pcl::visualization::PCL_VISUALIZER_LINE_WIDTH, 3, "cube10");
+		viewer->setShapeRenderingProperties(pcl::visualization::PCL_VISUALIZER_LINE_WIDTH, 3, "cube11");
+		viewer->setShapeRenderingProperties(pcl::visualization::PCL_VISUALIZER_LINE_WIDTH, 3, "cube12");
 	}
 
 };
